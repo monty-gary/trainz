@@ -1,31 +1,52 @@
 # trainz
 
-`trainz` is a frontend-only prototype built with Vite + React + TypeScript.
+`trainz` is now split into a frontend and backend inside one repository.
 
-It renders a stylized railway scene with a visible track and an animated train that automatically passes from left to right every 15 seconds.
+## Repository structure
+- `frontend/`: Vite + React + TypeScript app (GitHub Pages target)
+- `backend/`: Minimal Node.js web service placeholder (Render-ready shape)
 
-## Run locally
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Start the dev server:
-   ```bash
-   npm run dev
-   ```
-3. Open the printed local URL in your browser.
+## Frontend
+The frontend renders the stylized railway scene with the animated train.
 
-## Build
+Run locally:
 ```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Build production assets:
+```bash
+cd frontend
 npm run build
 ```
 
-The production output is generated in `dist/`.
+Output directory: `frontend/dist/`
+
+## Backend
+The backend is a minimal HTTP service that listens on `PORT` and exposes:
+- `GET /` returning a simple JSON payload
+- `GET /health` returning a health response
+
+Run locally:
+```bash
+cd backend
+npm install
+npm run start
+```
+
+Optional dev mode:
+```bash
+cd backend
+npm run dev
+```
 
 ## Deployment
 - GitHub Pages deploys automatically from branch `dev` via `.github/workflows/deploy-pages.yml`.
-- The site is hosted at `https://monty-gary.github.io/trainz/`.
+- The workflow builds the frontend from `frontend/` and publishes `frontend/dist/`.
+- The site URL remains: `https://monty-gary.github.io/trainz/`.
 
 ## Notes
-- Pure frontend app, no backend service required.
-- Main scene and animation live in `src/App.tsx` and `src/styles.css`.
+- Frontend source and styling live under `frontend/src/`.
+- Backend is a placeholder service intended as a starting point for a future Render deployment.
