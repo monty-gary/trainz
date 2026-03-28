@@ -1,27 +1,27 @@
-# TrackRelay
+# trainz
 
-## Overview
-TrackRelay is a prototype for a shared web experience where every connected user screen acts as a station along a railway. Trains represent user-initiated transitions, carrying data, status, and cues as they travel from one screen to the next, keeping everyone aligned in rhythm and narrative.
+`trainz` is a frontend-only prototype built with Vite + React + TypeScript.
 
-## Features
-- **Screen-station metaphor** – each participant has a dedicated panel that can dispatch or receive a train, emphasizing live collaboration.
-- **Train-based navigation** – interactions are chunked into trains (messages, scenes, or shared state) to make transitions feel deliberate and theatrical.
-- **Signal-aware layout** – the interface will highlight which stations are sending or expecting trains, so collaborators can anticipate the next move.
+It renders a stylized railway scene with a visible track and an animated train that automatically passes from left to right every 15 seconds.
 
-## Architecture
-- **Client**: a reactive SPA (likely React/Vue/Solid) that renders each connected screen as a station and animates train arrivals/departures.
-- **Realtime transport**: WebSocket or WebRTC channels carry the train payloads, carrying metadata that tells each station how to update upon arrival.
-- **Conductor service**: a lightweight backend orchestrates the trains, enforces ordering, and tracks participant presence.
+## Run locally
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Start the dev server:
+   ```bash
+   npm run dev
+   ```
+3. Open the printed local URL in your browser.
 
-## Getting Started
-1. Clone the repo and switch to the `dev` branch (`git checkout dev`).
-2. Install the dependencies for the chosen stack (e.g., `npm install` or `pnpm install`).
-3. Start the dev server and open multiple screens to observe trains moving between them.
+## Build
+```bash
+npm run build
+```
 
-## Next Steps
-- Draft the station UI patterns and define what data each train carries.
-- Decide on the realtime transport (socket server, presence tracking, backpressure behavior).
-- Sketch the train animation/state transitions so every screen feels responsive.
-- Wire up the backend conductor to accept commands from one screen and broadcast them to others.
+The production output is generated in `dist/`.
 
-[dev branch](https://github.com/monty-gary/trackrelay/tree/dev) is the active workspace for ongoing work.
+## Notes
+- Pure frontend app, no backend service required.
+- Main scene and animation live in `src/App.tsx` and `src/styles.css`.
