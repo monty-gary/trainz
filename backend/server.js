@@ -6,6 +6,9 @@ const DEFAULT_PASSWORD = 'allaboard';
 const DEFAULT_GRID_SIZE = 9;
 const DEFAULT_SEGMENT_DURATION_MS = 2200;
 const DEFAULT_SCHEDULE_LEAD_MS = 1200;
+const TRAIN_TICK_INTERVAL_MS = 100;
+const SIGNAL_STOP = 'red';
+const SIGNAL_GO = 'green';
 const OPEN_STATE = 1;
 
 const port = Number(process.env.PORT || 3000);
@@ -26,9 +29,13 @@ const socketByClientId = new Map();
 
 let topologyRevision = 0;
 let scheduleRevision = 0;
-let cycleStartTimeMs = Date.now() + scheduleLeadMs;
 let railTiles = new Map();
 let routeNodes = [station, station];
+let trainMotion = {
+  segmentIndex: 0,
+  segmentStartTimeMs: Date.now() + scheduleLeadMs,
+  pausedAtPoint: null
+};
 
 const server = http.createServer(async (req, res) => {
   if (applyCors(req, res)) {
@@ -208,6 +215,7 @@ wss.on('connection', (ws, clientId) => {
       }
 
       session.claimedCell = { x, y };
+      session.signalState = SIGNAL_GO;
       session.lastSeenAtMs = Date.now();
       recomputeTopologyAndSchedule();
       broadcastState();
@@ -220,8 +228,23 @@ wss.on('connection', (ws, clientId) => {
       }
 
       session.claimedCell = null;
+      session.signalState = null;
       session.lastSeenAtMs = Date.now();
       recomputeTopologyAndSchedule();
+      broadcastState();
+      return;
+    }
+
+    if (message.type === 'toggle_signal') {
+      if (!session.claimedCell) {
+        sendError(ws, 'claim a tile before toggling signal');
+        return;
+      }
+
+      session.signalState = session.signalState === SIGNAL_STOP ? SIGNAL_GO : SIGNAL_STOP;
+      session.lastSeenAtMs = Date.now();
+      advanceTrain(Date.now());
+
       broadcastState();
       return;
     }
@@ -249,6 +272,12 @@ wss.on('connection', (ws, clientId) => {
 setInterval(() => {
   broadcastState();
 }, 5000);
+
+setInterval(() => {
+  if (advanceTrain(Date.now())) {
+    broadcastState();
+  }
+}, TRAIN_TICK_INTERVAL_MS);
 
 recomputeTopologyAndSchedule();
 
@@ -291,6 +320,7 @@ function getOrCreateClient(clientId) {
     clientId,
     username: null,
     claimedCell: null,
+    signalState: null,
     connected: false,
     createdAtMs: Date.now(),
     lastSeenAtMs: Date.now()
@@ -305,6 +335,7 @@ function serializeClient(client) {
     clientId: client.clientId,
     username: client.username,
     claimedCell: client.claimedCell,
+    signalState: client.signalState,
     connected: client.connected,
     lastSeenAtMs: client.lastSeenAtMs
   };
@@ -472,6 +503,7 @@ function getOccupiedUserCells() {
 
 function buildSnapshot(clientId) {
   const now = Date.now();
+  const cycleStartTimeMs = trainMotion.segmentStartTimeMs - trainMotion.segmentIndex * trainSegmentDurationMs;
   const claimedCells = [];
 
   for (const client of clients.values()) {
@@ -480,7 +512,8 @@ function buildSnapshot(clientId) {
         ...client.claimedCell,
         clientId: client.clientId,
         username: client.username,
-        connected: client.connected
+        connected: client.connected,
+        signalState: client.signalState === SIGNAL_STOP ? SIGNAL_STOP : SIGNAL_GO
       });
     }
   }
@@ -525,6 +558,13 @@ function buildSnapshot(clientId) {
       segmentCount: Math.max(0, routeNodes.length - 1),
       cycleDurationMs: Math.max(trainSegmentDurationMs, (routeNodes.length - 1) * trainSegmentDurationMs)
     },
+    train: {
+      segmentIndex: trainMotion.segmentIndex,
+      segmentStartTimeMs: trainMotion.segmentStartTimeMs,
+      segmentDurationMs: trainSegmentDurationMs,
+      paused: Boolean(trainMotion.pausedAtPoint),
+      pausedAt: trainMotion.pausedAtPoint
+    },
     clients: clientsList,
     self: serializeClient(getOrCreateClient(clientId))
   };
@@ -544,7 +584,104 @@ function recomputeTopologyAndSchedule() {
 
   topologyRevision += 1;
   scheduleRevision += 1;
-  cycleStartTimeMs = Date.now() + scheduleLeadMs;
+  resetTrainMotion(Date.now());
+}
+
+function resetTrainMotion(nowMs) {
+  trainMotion = {
+    segmentIndex: 0,
+    segmentStartTimeMs: nowMs + scheduleLeadMs,
+    pausedAtPoint: null
+  };
+}
+
+function advanceTrain(nowMs) {
+  const segmentCount = getSegmentCount();
+
+  if (segmentCount < 1) {
+    if (trainMotion.segmentIndex !== 0 || trainMotion.pausedAtPoint) {
+      trainMotion.segmentIndex = 0;
+      trainMotion.pausedAtPoint = null;
+      return true;
+    }
+
+    return false;
+  }
+
+  let changed = false;
+
+  if (trainMotion.pausedAtPoint) {
+    if (shouldTrainStopAtPoint(trainMotion.pausedAtPoint)) {
+      return false;
+    }
+
+    trainMotion.pausedAtPoint = null;
+    trainMotion.segmentStartTimeMs = nowMs;
+    return true;
+  }
+
+  if (nowMs < trainMotion.segmentStartTimeMs) {
+    return false;
+  }
+
+  const maxTransitions = Math.max(8, segmentCount * 4);
+  let transitions = 0;
+
+  while (transitions < maxTransitions) {
+    const elapsedMs = nowMs - trainMotion.segmentStartTimeMs;
+    if (elapsedMs < trainSegmentDurationMs) {
+      break;
+    }
+
+    const arrivalNodeIndex = trainMotion.segmentIndex + 1;
+    const arrivalPoint = routeNodes[arrivalNodeIndex] || routeNodes[0];
+    const completedAtMs = trainMotion.segmentStartTimeMs + trainSegmentDurationMs;
+    const nextSegmentIndex = (trainMotion.segmentIndex + 1) % segmentCount;
+
+    trainMotion.segmentIndex = nextSegmentIndex;
+    trainMotion.segmentStartTimeMs = completedAtMs;
+    changed = true;
+
+    if (shouldTrainStopAtPoint(arrivalPoint)) {
+      trainMotion.pausedAtPoint = { x: arrivalPoint.x, y: arrivalPoint.y };
+      break;
+    }
+
+    transitions += 1;
+  }
+
+  return changed;
+}
+
+function shouldTrainStopAtPoint(point) {
+  if (!point || (point.x === station.x && point.y === station.y)) {
+    return false;
+  }
+
+  const owner = findClaimOwnerByPoint(point);
+  if (!owner) {
+    return false;
+  }
+
+  return owner.signalState === SIGNAL_STOP;
+}
+
+function findClaimOwnerByPoint(point) {
+  for (const client of clients.values()) {
+    if (!client.claimedCell) {
+      continue;
+    }
+
+    if (client.claimedCell.x === point.x && client.claimedCell.y === point.y) {
+      return client;
+    }
+  }
+
+  return null;
+}
+
+function getSegmentCount() {
+  return Math.max(0, routeNodes.length - 1);
 }
 
 function buildTreeEdges(occupiedMap) {

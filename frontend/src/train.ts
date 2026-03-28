@@ -8,12 +8,13 @@ export interface TrainState {
   worldX: number;
   worldY: number;
   direction: Direction;
+  paused: boolean;
 }
 
 export interface TileTrainState {
   x: number;
   y: number;
-  movement: 'entering' | 'exiting';
+  movement: 'entering' | 'exiting' | 'paused';
   edge: Direction;
 }
 
@@ -26,6 +27,10 @@ export function pointsEqual(a: Point, b: Point): boolean {
 }
 
 export function directionBetween(from: Point, to: Point): Direction {
+  if (to.x === from.x && to.y === from.y) {
+    return 'E';
+  }
+
   if (to.y < from.y) {
     return 'N';
   }
@@ -72,19 +77,28 @@ export function computeTrainState(snapshot: Snapshot | null, serverNowMs: number
     return null;
   }
 
-  const { schedule, routeNodes } = snapshot;
-  const cycleDuration = Math.max(schedule.segmentDurationMs, schedule.cycleDurationMs);
-  const elapsed = mod(serverNowMs - schedule.cycleStartTimeMs, cycleDuration);
-  const segmentIndex = Math.min(
-    schedule.segmentCount - 1,
-    Math.floor(elapsed / schedule.segmentDurationMs)
-  );
-
-  const segmentElapsed = elapsed - segmentIndex * schedule.segmentDurationMs;
-  const progress = clamp(segmentElapsed / schedule.segmentDurationMs, 0, 0.9999);
-
+  const { routeNodes, train } = snapshot;
+  const segmentCount = Math.max(1, routeNodes.length - 1);
+  const segmentIndex = Math.min(segmentCount - 1, Math.max(0, train.segmentIndex % segmentCount));
   const from = routeNodes[segmentIndex] || routeNodes[0];
   const to = routeNodes[segmentIndex + 1] || routeNodes[0];
+  const direction = directionBetween(from, to);
+
+  if (train.paused && train.pausedAt) {
+    return {
+      segmentIndex,
+      from: train.pausedAt,
+      to: train.pausedAt,
+      progress: 0,
+      worldX: train.pausedAt.x,
+      worldY: train.pausedAt.y,
+      direction,
+      paused: true
+    };
+  }
+
+  const elapsed = Math.max(0, serverNowMs - train.segmentStartTimeMs);
+  const progress = clamp(elapsed / train.segmentDurationMs, 0, 0.9999);
 
   return {
     segmentIndex,
@@ -93,7 +107,8 @@ export function computeTrainState(snapshot: Snapshot | null, serverNowMs: number
     progress,
     worldX: lerp(from.x, to.x, progress),
     worldY: lerp(from.y, to.y, progress),
-    direction: directionBetween(from, to)
+    direction,
+    paused: false
   };
 }
 
@@ -102,7 +117,16 @@ export function computeTileTrainState(tile: Point, trainState: TrainState | null
     return null;
   }
 
-  const { from, to, progress, direction } = trainState;
+  const { from, to, progress, direction, paused } = trainState;
+
+  if (paused && pointsEqual(tile, from)) {
+    return {
+      x: 50,
+      y: 50,
+      movement: 'paused',
+      edge: direction
+    };
+  }
 
   if (pointsEqual(tile, from) && progress <= 0.5) {
     const edge = edgePosition(direction);
@@ -132,8 +156,17 @@ export function computeTileTrainState(tile: Point, trainState: TrainState | null
   return null;
 }
 
-function mod(value: number, base: number): number {
-  return ((value % base) + base) % base;
+export function directionToDegrees(direction: Direction): number {
+  switch (direction) {
+    case 'N':
+      return -90;
+    case 'E':
+      return 0;
+    case 'S':
+      return 90;
+    case 'W':
+      return 180;
+  }
 }
 
 function lerp(start: number, end: number, amount: number): number {

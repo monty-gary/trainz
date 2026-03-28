@@ -1,8 +1,9 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, WS_URL, authenticate, getSession } from './api';
 import {
   computeTileTrainState,
   computeTrainState,
+  directionToDegrees,
   edgePosition,
   pointKey
 } from './train';
@@ -20,6 +21,8 @@ import type {
 const STORAGE_CLIENT_ID = 'trainz.clientId';
 const STORAGE_AUTH_TOKEN = 'trainz.authToken';
 const STORAGE_USERNAME = 'trainz.username';
+const LOBBY_CELL_SIZE = 72;
+const LOBBY_CELL_GAP = 8;
 
 type AuthPhase = 'checking' | 'required' | 'ready';
 type ConnectionState = 'offline' | 'connecting' | 'online';
@@ -229,10 +232,15 @@ function App() {
       return null;
     }
 
+    const unit = LOBBY_CELL_SIZE + LOBBY_CELL_GAP;
+    const left = trainState.worldX * unit + LOBBY_CELL_SIZE / 2;
+    const top = trainState.worldY * unit + LOBBY_CELL_SIZE / 2;
+
     return {
-      left: `${((trainState.worldX + 0.5) / snapshot.gridSize) * 100}%`,
-      top: `${((trainState.worldY + 0.5) / snapshot.gridSize) * 100}%`
-    };
+      left: `${left}px`,
+      top: `${top}px`,
+      '--train-rotation': `${directionToDegrees(trainState.direction)}deg`
+    } as CSSProperties;
   }, [snapshot, trainState]);
 
   const focusedTileTrain = useMemo(() => {
@@ -242,6 +250,18 @@ function App() {
 
     return computeTileTrainState(self.claimedCell, trainState);
   }, [self?.claimedCell, trainState]);
+
+  const focusedTrainStyle = useMemo(() => {
+    if (!focusedTileTrain || !trainState) {
+      return null;
+    }
+
+    return {
+      left: `${focusedTileTrain.x}%`,
+      top: `${focusedTileTrain.y}%`,
+      '--train-rotation': `${directionToDegrees(trainState.direction)}deg`
+    } as CSSProperties;
+  }, [focusedTileTrain, trainState]);
 
   async function handlePasswordSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -254,7 +274,7 @@ function App() {
 
     setIsWorking(true);
     setErrorMessage(null);
-    setInfoMessage(null);
+    setInfoMessage('Authenticating and waking backend...');
 
     try {
       const response = await authenticate(candidate, clientId);
@@ -309,6 +329,12 @@ function App() {
     setViewMode('lobby');
   }
 
+  function handleToggleSignal() {
+    setErrorMessage(null);
+    setInfoMessage('Signal toggle requested.');
+    sendWsMessage({ type: 'toggle_signal' });
+  }
+
   function sendWsMessage(message: ClientMessage) {
     const socket = socketRef.current;
 
@@ -332,7 +358,7 @@ function App() {
       <main className="app-shell">
         <section className="card gate-card">
           <h1>trainz</h1>
-          <p>Checking saved session with backend...</p>
+          <p>Waking backend and checking saved session...</p>
         </section>
       </main>
     );
@@ -360,6 +386,7 @@ function App() {
           </form>
           <p className="hint">Backend endpoint: {API_BASE_URL}</p>
           {errorMessage ? <p className="status error">{errorMessage}</p> : null}
+          {infoMessage ? <p className="status info">{infoMessage}</p> : null}
         </section>
       </main>
     );
@@ -443,7 +470,9 @@ function App() {
             canClaim={!hasClaimedCell}
             selfClientId={clientId}
             trainMarkerStyle={trainMarkerStyle}
+            trainPaused={Boolean(trainState?.paused)}
             onClaimCell={handleClaimCell}
+            onToggleSignal={handleToggleSignal}
           />
         ) : null}
 
@@ -452,8 +481,10 @@ function App() {
             cell={self.claimedCell}
             self={self}
             railsByKey={railsByKey}
-            claimedByKey={claimedByKey}
+            claimedCells={snapshot.claimedCells}
             trainTileState={focusedTileTrain}
+            trainStyle={focusedTrainStyle}
+            onToggleSignal={handleToggleSignal}
           />
         ) : null}
 
@@ -471,8 +502,10 @@ interface LobbyMapProps {
   claimableSet: Set<string>;
   canClaim: boolean;
   selfClientId: string;
-  trainMarkerStyle: { left: string; top: string } | null;
+  trainMarkerStyle: CSSProperties | null;
+  trainPaused: boolean;
   onClaimCell: (cell: Point) => void;
+  onToggleSignal: () => void;
 }
 
 function LobbyMap({
@@ -483,7 +516,9 @@ function LobbyMap({
   canClaim,
   selfClientId,
   trainMarkerStyle,
-  onClaimCell
+  trainPaused,
+  onClaimCell,
+  onToggleSignal
 }: LobbyMapProps) {
   const cells: JSX.Element[] = [];
 
@@ -495,6 +530,7 @@ function LobbyMap({
       const isStation = x === snapshot.station.x && y === snapshot.station.y;
       const isClaimable = claimableSet.has(key);
       const isSelf = claimed?.clientId === selfClientId;
+      const signalState = claimed?.signalState === 'red' ? 'red' : 'green';
 
       let cellClass = 'cell';
       if (isStation) {
@@ -515,6 +551,18 @@ function LobbyMap({
               {claimed.connected ? '' : ' (offline)'}
             </span>
           ) : null}
+          {claimed ? (
+            <button
+              type="button"
+              className={`signal-zone ${signalState}${isSelf ? ' self' : ''}`}
+              onClick={isSelf ? onToggleSignal : undefined}
+              disabled={!isSelf}
+              aria-label={isSelf ? 'Toggle tile stop/passthrough signal' : undefined}
+              title={`Signal: ${signalState === 'red' ? 'stop' : 'passthrough'}`}
+            >
+              {signalState === 'red' ? 'Stop' : 'Pass'}
+            </button>
+          ) : null}
           {!claimed && !isStation && isClaimable && canClaim ? (
             <button
               type="button"
@@ -534,21 +582,21 @@ function LobbyMap({
     <section className="panel">
       <h2>Shared topology map</h2>
       <p>
-        Claimable cells are adjacent to existing network tiles. Route segments: {snapshot.schedule.segmentCount}.{' '}
-        Cycle time: {Math.round(snapshot.schedule.cycleDurationMs / 1000)}s.
+        Tap your signal zone to toggle stop/passthrough. Route segments: {snapshot.schedule.segmentCount}. Cycle time:{' '}
+        {Math.round(snapshot.schedule.cycleDurationMs / 1000)}s.
       </p>
       <div className="grid-wrap">
         <div
           className="grid"
           style={{
-            gridTemplateColumns: `repeat(${snapshot.gridSize}, minmax(0, 1fr))`
+            gridTemplateColumns: `repeat(${snapshot.gridSize}, ${LOBBY_CELL_SIZE}px)`,
+            gridAutoRows: `${LOBBY_CELL_SIZE}px`,
+            gap: `${LOBBY_CELL_GAP}px`
           }}
         >
           {cells}
           {trainMarkerStyle ? (
-            <div className="train-marker" style={trainMarkerStyle}>
-              <span>Loco</span>
-            </div>
+            <TrainSprite className="lobby" style={trainMarkerStyle} paused={trainPaused} />
           ) : null}
         </div>
       </div>
@@ -560,37 +608,33 @@ interface FocusedScreenViewProps {
   cell: Point;
   self: ClientState;
   railsByKey: Map<string, RailTile>;
-  claimedByKey: Map<string, ClaimedCell>;
+  claimedCells: ClaimedCell[];
   trainTileState: ReturnType<typeof computeTileTrainState>;
+  trainStyle: CSSProperties | null;
+  onToggleSignal: () => void;
 }
 
 function FocusedScreenView({
   cell,
   self,
   railsByKey,
-  claimedByKey,
-  trainTileState
+  claimedCells,
+  trainTileState,
+  trainStyle,
+  onToggleSignal
 }: FocusedScreenViewProps) {
   const ownRailEdges = railsByKey.get(pointKey(cell))?.edges || [];
+  const ownSignalState = self.signalState === 'red' ? 'red' : 'green';
 
-  const neighbors = useMemo(() => {
-    const nearby: Array<{ label: string; value: string }> = [];
-    const offsets: Array<{ label: string; point: Point }> = [
-      { label: 'North', point: { x: cell.x, y: cell.y - 1 } },
-      { label: 'East', point: { x: cell.x + 1, y: cell.y } },
-      { label: 'South', point: { x: cell.x, y: cell.y + 1 } },
-      { label: 'West', point: { x: cell.x - 1, y: cell.y } }
-    ];
-
-    for (const entry of offsets) {
-      const found = claimedByKey.get(pointKey(entry.point));
-      if (found) {
-        nearby.push({ label: entry.label, value: found.username });
-      }
-    }
-
-    return nearby;
-  }, [cell.x, cell.y, claimedByKey]);
+  const networkSignals = useMemo(() => {
+    return claimedCells
+      .map((entry) => ({
+        id: entry.clientId,
+        label: `${entry.username} (${entry.x}, ${entry.y})`,
+        signalState: entry.signalState
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [claimedCells]);
 
   return (
     <section className="panel focused">
@@ -600,29 +644,37 @@ function FocusedScreenView({
       </p>
       <div className="focused-tile">
         <RailGlyph edges={ownRailEdges} emphasized />
-        {trainTileState ? (
-          <div
-            className="train-dot"
-            style={{ left: `${trainTileState.x}%`, top: `${trainTileState.y}%` }}
-            title={`${trainTileState.movement} ${trainTileState.edge}`}
-          >
-            L
-          </div>
+        {trainStyle && trainTileState ? (
+          <TrainSprite
+            className="focused"
+            style={trainStyle}
+            paused={trainTileState.movement === 'paused'}
+          />
         ) : null}
+        <button
+          type="button"
+          className={`focused-signal ${ownSignalState}`}
+          onClick={onToggleSignal}
+          title="Toggle stop/passthrough"
+        >
+          {ownSignalState === 'red' ? 'Signal: STOP' : 'Signal: PASS'}
+        </button>
       </div>
       <p className="hint">
-        The locomotive appears here as it crosses this tile and exits/enters through the proper edge.
+        Red holds the train at this station point. Green releases it onto the next route segment.
       </p>
       <div className="neighbor-list">
-        {neighbors.length > 0 ? (
-          neighbors.map((neighbor) => (
-            <div key={neighbor.label} className="neighbor-item">
-              <strong>{neighbor.label}</strong>
-              <span>{neighbor.value}</span>
+        {networkSignals.length > 0 ? (
+          networkSignals.map((entry) => (
+            <div key={entry.id} className="neighbor-item">
+              <strong>{entry.label}</strong>
+              <span className={`signal-pill ${entry.signalState}`}>
+                {entry.signalState === 'red' ? 'STOP' : 'PASS'}
+              </span>
             </div>
           ))
         ) : (
-          <p className="hint">No neighboring claimed tiles yet.</p>
+          <p className="hint">No claimed tiles yet.</p>
         )}
       </div>
     </section>
@@ -647,6 +699,32 @@ function RailGlyph({ edges, emphasized = false }: { edges: Direction[]; emphasiz
       })}
       <circle cx="50" cy="50" r="7" className="rail-hub" />
     </svg>
+  );
+}
+
+function TrainSprite({
+  className,
+  style,
+  paused
+}: {
+  className: 'lobby' | 'focused';
+  style: CSSProperties;
+  paused: boolean;
+}) {
+  return (
+    <div className={`train-sprite ${className}${paused ? ' paused' : ''}`} style={style}>
+      <div className="train-car locomotive">
+        <span className="train-window" />
+      </div>
+      <div className="train-coupler" />
+      <div className="train-car carriage">
+        <span className="train-window" />
+      </div>
+      <span className="train-wheel wheel-a" />
+      <span className="train-wheel wheel-b" />
+      <span className="train-wheel wheel-c" />
+      <span className="train-wheel wheel-d" />
+    </div>
   );
 }
 

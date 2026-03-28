@@ -15,9 +15,13 @@ Each browser/device acts as one tile in a shared grid. Participants authenticate
 - 2D grid
 - central station in middle cell
 - claimable cells are empty cells adjacent to station or any claimed tile
+- each claimed tile has a signal touch zone:
+  - `red` = stop
+  - `green` = passthrough
+  - only the tile owner can toggle, but everyone sees current signal state
 4. Focused screen view
 - highlights the claimed tile
-- shows local track geometry and train entering/exiting through correct edges
+- shows local track geometry, signal mode, and a stylized locomotive + carriage entering/exiting through the correct edges
 - users can return to lobby at any time
 
 ## Backend architecture (`backend/server.js`)
@@ -25,14 +29,16 @@ Each browser/device acts as one tile in a shared grid. Participants authenticate
 - Universal password validation through `POST /api/auth`
 - Session check endpoint `GET /api/session`
 - WebSocket endpoint `/ws` for realtime snapshots + client actions
+- Per-claimed-tile signal state (`red` stop / `green` passthrough), owner-toggled
 - Deterministic topology and route generation:
 - occupied cells = station + claimed user cells
 - BFS spanning tree rooted at station
 - DFS walk over that tree produces a coherent closed route through all occupied cells and back to station
-- Server-authoritative train schedule with timestamps:
-- `cycleStartTimeMs`
+- Server-authoritative train runtime + schedule data:
+- current segment index and segment start time
 - per-segment duration (`segmentDurationMs`)
-- route segment count / cycle duration
+- paused state + paused-at tile when stopped by a red signal
+- deterministic progression along route edges
 - Clients correct local clock using server timestamps from snapshots
 
 ## Frontend architecture (`frontend/src`)
@@ -95,12 +101,21 @@ WebSocket client messages:
 - `set_username`
 - `claim_cell`
 - `release_cell`
+- `toggle_signal`
 - `ping`
 
 Server broadcasts state snapshots with:
 - grid + station
 - claimed cells and claimable cells
+- signal state on each claimed tile
 - per-tile rail edges
 - route nodes
 - schedule timestamps
+- server-authoritative train runtime (`segmentIndex`, `segmentStartTimeMs`, `paused`, `pausedAt`)
 - self/client session info
+
+## Signal stop behavior
+- The backend is authoritative for train stop/resume decisions.
+- When the train reaches a claimed tile with a `red` signal, it pauses at that tile center.
+- Toggling that tile back to `green` resumes motion from the backend state machine.
+- If multiple red signals exist, the train stops deterministically at the next red tile encountered on the current route.

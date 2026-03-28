@@ -178,25 +178,25 @@ button.ghost {
 .grid-wrap {
   width: 100%;
   overflow-x: auto;
+  display: flex;
+  justify-content: center;
 }
 
 .grid {
   position: relative;
   display: grid;
-  gap: 0.36rem;
-  min-width: 100%;
-  width: min(700px, 100%);
-  margin: 0 auto;
+  width: max-content;
+  margin: 0;
 }
 
 .cell {
   position: relative;
-  aspect-ratio: 1 / 1;
   border-radius: 8px;
   border: 1px solid rgba(89, 126, 156, 0.52);
   background: rgba(9, 24, 39, 0.9);
   overflow: hidden;
-  min-width: 54px;
+  width: 100%;
+  height: 100%;
 }
 
 .cell.station {
@@ -220,6 +220,41 @@ button.ghost {
   font-size: 0.75rem;
   border-radius: 8px;
   background: linear-gradient(120deg, #7ce5a6, #4de0cf);
+}
+
+.signal-zone {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  min-width: 46px;
+  padding: 0.18rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(10, 17, 23, 0.5);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.signal-zone.red {
+  background: rgba(255, 106, 120, 0.9);
+  color: #2d0008;
+}
+
+.signal-zone.green {
+  background: rgba(112, 232, 157, 0.9);
+  color: #062b12;
+}
+
+.signal-zone.self {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.signal-zone:disabled {
+  opacity: 1;
+  cursor: default;
 }
 
 .badge {
@@ -275,22 +310,127 @@ button.ghost {
   stroke-width: 2.8;
 }
 
-.train-marker {
+.train-sprite {
   position: absolute;
-  width: 26px;
-  height: 26px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: radial-gradient(circle at 35% 35%, #ffe7b0, #f19f35);
-  color: #362100;
-  font-size: 0.56rem;
-  font-weight: 700;
-  border: 1px solid rgba(255, 242, 207, 0.8);
-  box-shadow: 0 0 22px rgba(255, 194, 104, 0.68);
+  width: 40px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   pointer-events: none;
-  animation: loco-pulse 900ms ease-in-out infinite alternate;
+  transform: translate(-50%, -50%) rotate(var(--train-rotation, 0deg));
+  transform-origin: center;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
+  transition: transform 160ms linear;
+}
+
+.train-sprite.lobby {
+  width: 42px;
+  height: 22px;
+}
+
+.train-sprite.focused {
+  width: 74px;
+  height: 34px;
+}
+
+.train-car {
+  height: 12px;
+  border: 1px solid rgba(17, 18, 20, 0.65);
+  position: relative;
+}
+
+.train-sprite.lobby .train-car {
+  height: 12px;
+}
+
+.train-sprite.focused .train-car {
+  height: 18px;
+}
+
+.train-car.locomotive {
+  width: 17px;
+  border-radius: 3px 6px 6px 3px;
+  background: linear-gradient(140deg, #ffd27b, #f18f2d);
+}
+
+.train-car.carriage {
+  width: 16px;
+  border-radius: 5px;
+  background: linear-gradient(140deg, #6ad6ff, #2e8fc5);
+}
+
+.train-sprite.focused .train-car.locomotive {
+  width: 30px;
+}
+
+.train-sprite.focused .train-car.carriage {
+  width: 26px;
+}
+
+.train-window {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 2px;
+  background: rgba(240, 253, 255, 0.9);
+}
+
+.train-sprite.focused .train-window {
+  top: 3px;
+  right: 5px;
+  width: 8px;
+  height: 7px;
+}
+
+.train-coupler {
+  width: 4px;
+  height: 3px;
+  border-radius: 999px;
+  background: #111b26;
+}
+
+.train-sprite.focused .train-coupler {
+  width: 6px;
+  height: 4px;
+}
+
+.train-wheel {
+  position: absolute;
+  bottom: 1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #0a0d10;
+}
+
+.train-sprite.focused .train-wheel {
+  width: 6px;
+  height: 6px;
+  bottom: 0;
+}
+
+.wheel-a {
+  left: 8px;
+}
+
+.wheel-b {
+  left: 15px;
+}
+
+.wheel-c {
+  right: 13px;
+}
+
+.wheel-d {
+  right: 6px;
+}
+
+.train-sprite.paused {
+  animation: train-idle 1200ms ease-in-out infinite alternate;
 }
 
 .focused {
@@ -309,20 +449,27 @@ button.ghost {
   overflow: hidden;
 }
 
-.train-dot {
+.focused-signal {
   position: absolute;
-  width: 40px;
-  height: 40px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #fff4cb, #ffb74f);
-  color: #2a1600;
-  display: grid;
-  place-items: center;
-  font-family: 'Space Mono', monospace;
-  font-weight: 700;
-  border: 1px solid rgba(255, 245, 191, 0.9);
-  box-shadow: 0 0 26px rgba(255, 178, 72, 0.52);
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid rgba(18, 24, 35, 0.65);
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.focused-signal.red {
+  background: linear-gradient(145deg, #ff6a77, #ff3f52);
+  color: #290007;
+}
+
+.focused-signal.green {
+  background: linear-gradient(145deg, #8be6a9, #5dcc88);
+  color: #052212;
 }
 
 .neighbor-list {
@@ -333,11 +480,30 @@ button.ghost {
 .neighbor-item {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   border-radius: 8px;
   border: 1px solid rgba(112, 164, 196, 0.34);
   background: rgba(8, 22, 35, 0.65);
   padding: 0.4rem 0.55rem;
   color: #d0e5f3;
+  gap: 0.65rem;
+}
+
+.signal-pill {
+  font-size: 0.68rem;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.14rem 0.5rem;
+}
+
+.signal-pill.red {
+  background: rgba(255, 116, 130, 0.92);
+  color: #32030a;
+}
+
+.signal-pill.green {
+  background: rgba(116, 232, 163, 0.9);
+  color: #043117;
 }
 
 .connection-pill {
@@ -390,13 +556,13 @@ button.ghost {
   color: #9eb9cc;
 }
 
-@keyframes loco-pulse {
+@keyframes train-idle {
   from {
-    transform: translate(-50%, -50%) scale(1);
+    filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
   }
 
   to {
-    transform: translate(-50%, -50%) scale(1.07);
+    filter: drop-shadow(0 2px 9px rgba(255, 206, 137, 0.68));
   }
 }
 
@@ -418,9 +584,12 @@ button.ghost {
     justify-content: space-between;
   }
 
-  .train-dot {
-    width: 32px;
-    height: 32px;
-    font-size: 0.8rem;
+  .train-sprite.focused {
+    width: 58px;
+    height: 28px;
+  }
+
+  .focused-signal {
+    font-size: 0.7rem;
   }
 }
