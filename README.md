@@ -22,6 +22,10 @@ npm run build
 
 The production output is generated in `dist/`.
 
+## Deployment
+- GitHub Pages deploys automatically from branch `dev` via `.github/workflows/deploy-pages.yml`.
+- The site is hosted at `https://monty-gary.github.io/trainz/`.
+
 ## Notes
 - Pure frontend app, no backend service required.
 - Main scene and animation live in `src/App.tsx` and `src/styles.css`.
