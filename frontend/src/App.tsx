@@ -1,4 +1,4 @@
-import { CSSProperties, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, WS_URL, authenticate, getSession } from './api';
 import {
   computeTileTrainState,
@@ -47,16 +47,43 @@ function App() {
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
+  const shouldAnimateTrain = Boolean(snapshot);
+  const sendWsMessage = useCallback((message: ClientMessage) => {
+    const socket = socketRef.current;
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setErrorMessage('Realtime connection is not ready yet.');
+      return;
+    }
+
+    socket.send(JSON.stringify(message));
+  }, []);
+  const clearAuth = useCallback(() => {
+    setAuthToken(null);
+    setAuthPhase('required');
+    setSnapshot(null);
+    localStorage.removeItem(STORAGE_AUTH_TOKEN);
+  }, []);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
+    if (!shouldAnimateTrain) {
       setTickMs(Date.now());
-    }, 120);
+      return;
+    }
+
+    let frameId = 0;
+
+    const tick = () => {
+      setTickMs(Date.now());
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
 
     return () => {
-      window.clearInterval(intervalId);
+      window.cancelAnimationFrame(frameId);
     };
-  }, []);
+  }, [shouldAnimateTrain]);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +126,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [authToken, clientId]);
+  }, [authToken, clientId, clearAuth]);
 
   useEffect(() => {
     if (authPhase !== 'ready' || !authToken) {
@@ -173,7 +200,7 @@ function App() {
         ws.close();
       }
     };
-  }, [authPhase, authToken, clientId]);
+  }, [authPhase, authToken, clientId, sendWsMessage]);
 
   const self = snapshot?.self || null;
   const hasUsername = Boolean(self?.username);
@@ -233,12 +260,12 @@ function App() {
     }
 
     const unit = LOBBY_CELL_SIZE + LOBBY_CELL_GAP;
-    const left = trainState.worldX * unit + LOBBY_CELL_SIZE / 2;
-    const top = trainState.worldY * unit + LOBBY_CELL_SIZE / 2;
+    const x = trainState.worldX * unit + LOBBY_CELL_SIZE / 2;
+    const y = trainState.worldY * unit + LOBBY_CELL_SIZE / 2;
 
     return {
-      left: `${left}px`,
-      top: `${top}px`,
+      '--train-x': `${x}px`,
+      '--train-y': `${y}px`,
       '--train-rotation': `${directionToDegrees(trainState.direction)}deg`
     } as CSSProperties;
   }, [snapshot, trainState]);
@@ -262,6 +289,28 @@ function App() {
       '--train-rotation': `${directionToDegrees(trainState.direction)}deg`
     } as CSSProperties;
   }, [focusedTileTrain, trainState]);
+
+  const handleClaimCell = useCallback(
+    (cell: Point) => {
+      setErrorMessage(null);
+      setInfoMessage(`Requesting tile (${cell.x}, ${cell.y}).`);
+      sendWsMessage({ type: 'claim_cell', x: cell.x, y: cell.y });
+      setViewMode('screen');
+    },
+    [sendWsMessage]
+  );
+
+  const handleReleaseCell = useCallback(() => {
+    setInfoMessage('Released your tile.');
+    sendWsMessage({ type: 'release_cell' });
+    setViewMode('lobby');
+  }, [sendWsMessage]);
+
+  const handleToggleSignal = useCallback(() => {
+    setErrorMessage(null);
+    setInfoMessage('Signal toggle requested.');
+    sendWsMessage({ type: 'toggle_signal' });
+  }, [sendWsMessage]);
 
   async function handlePasswordSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -314,43 +363,6 @@ function App() {
     setInfoMessage('Username saved.');
     setErrorMessage(null);
     sendWsMessage({ type: 'set_username', username: normalized });
-  }
-
-  function handleClaimCell(cell: Point) {
-    setErrorMessage(null);
-    setInfoMessage(`Requesting tile (${cell.x}, ${cell.y}).`);
-    sendWsMessage({ type: 'claim_cell', x: cell.x, y: cell.y });
-    setViewMode('screen');
-  }
-
-  function handleReleaseCell() {
-    setInfoMessage('Released your tile.');
-    sendWsMessage({ type: 'release_cell' });
-    setViewMode('lobby');
-  }
-
-  function handleToggleSignal() {
-    setErrorMessage(null);
-    setInfoMessage('Signal toggle requested.');
-    sendWsMessage({ type: 'toggle_signal' });
-  }
-
-  function sendWsMessage(message: ClientMessage) {
-    const socket = socketRef.current;
-
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setErrorMessage('Realtime connection is not ready yet.');
-      return;
-    }
-
-    socket.send(JSON.stringify(message));
-  }
-
-  function clearAuth() {
-    setAuthToken(null);
-    setAuthPhase('required');
-    setSnapshot(null);
-    localStorage.removeItem(STORAGE_AUTH_TOKEN);
   }
 
   if (authPhase === 'checking') {
@@ -520,63 +532,67 @@ function LobbyMap({
   onClaimCell,
   onToggleSignal
 }: LobbyMapProps) {
-  const cells: JSX.Element[] = [];
+  const cells = useMemo(() => {
+    const renderedCells: JSX.Element[] = [];
 
-  for (let y = 0; y < snapshot.gridSize; y += 1) {
-    for (let x = 0; x < snapshot.gridSize; x += 1) {
-      const key = pointKey({ x, y });
-      const claimed = claimedByKey.get(key);
-      const rail = railsByKey.get(key);
-      const isStation = x === snapshot.station.x && y === snapshot.station.y;
-      const isClaimable = claimableSet.has(key);
-      const isSelf = claimed?.clientId === selfClientId;
-      const signalState = claimed?.signalState === 'red' ? 'red' : 'green';
+    for (let y = 0; y < snapshot.gridSize; y += 1) {
+      for (let x = 0; x < snapshot.gridSize; x += 1) {
+        const key = pointKey({ x, y });
+        const claimed = claimedByKey.get(key);
+        const rail = railsByKey.get(key);
+        const isStation = x === snapshot.station.x && y === snapshot.station.y;
+        const isClaimable = claimableSet.has(key);
+        const isSelf = claimed?.clientId === selfClientId;
+        const signalState = claimed?.signalState === 'red' ? 'red' : 'green';
 
-      let cellClass = 'cell';
-      if (isStation) {
-        cellClass += ' station';
-      } else if (claimed) {
-        cellClass += ' occupied';
-      } else if (isClaimable && canClaim) {
-        cellClass += ' claimable';
+        let cellClass = 'cell';
+        if (isStation) {
+          cellClass += ' station';
+        } else if (claimed) {
+          cellClass += ' occupied';
+        } else if (isClaimable && canClaim) {
+          cellClass += ' claimable';
+        }
+
+        renderedCells.push(
+          <div key={key} className={cellClass}>
+            <RailGlyph edges={rail?.edges || []} emphasized={Boolean(isStation || isSelf)} />
+            {isStation ? <span className="badge station-badge">Station</span> : null}
+            {claimed ? (
+              <span className={`badge user-badge${isSelf ? ' self' : ''}`}>
+                {claimed.username}
+                {claimed.connected ? '' : ' (offline)'}
+              </span>
+            ) : null}
+            {claimed ? (
+              <button
+                type="button"
+                className={`signal-zone ${signalState}${isSelf ? ' self' : ''}`}
+                onClick={isSelf ? onToggleSignal : undefined}
+                disabled={!isSelf}
+                aria-label={isSelf ? 'Toggle tile stop/passthrough signal' : undefined}
+                title={`Signal: ${signalState === 'red' ? 'stop' : 'passthrough'}`}
+              >
+                {signalState === 'red' ? 'STOP' : 'PASS'}
+              </button>
+            ) : null}
+            {!claimed && !isStation && isClaimable && canClaim ? (
+              <button
+                type="button"
+                className="claim-button"
+                onClick={() => onClaimCell({ x, y })}
+                aria-label={`Claim cell ${x}, ${y}`}
+              >
+                Claim
+              </button>
+            ) : null}
+          </div>
+        );
       }
-
-      cells.push(
-        <div key={key} className={cellClass}>
-          <RailGlyph edges={rail?.edges || []} emphasized={Boolean(isStation || isSelf)} />
-          {isStation ? <span className="badge station-badge">Station</span> : null}
-          {claimed ? (
-            <span className={`badge user-badge${isSelf ? ' self' : ''}`}>
-              {claimed.username}
-              {claimed.connected ? '' : ' (offline)'}
-            </span>
-          ) : null}
-          {claimed ? (
-            <button
-              type="button"
-              className={`signal-zone ${signalState}${isSelf ? ' self' : ''}`}
-              onClick={isSelf ? onToggleSignal : undefined}
-              disabled={!isSelf}
-              aria-label={isSelf ? 'Toggle tile stop/passthrough signal' : undefined}
-              title={`Signal: ${signalState === 'red' ? 'stop' : 'passthrough'}`}
-            >
-              {signalState === 'red' ? 'Stop' : 'Pass'}
-            </button>
-          ) : null}
-          {!claimed && !isStation && isClaimable && canClaim ? (
-            <button
-              type="button"
-              className="claim-button"
-              onClick={() => onClaimCell({ x, y })}
-              aria-label={`Claim cell ${x}, ${y}`}
-            >
-              Claim
-            </button>
-          ) : null}
-        </div>
-      );
     }
-  }
+
+    return renderedCells;
+  }, [snapshot, claimedByKey, railsByKey, claimableSet, canClaim, selfClientId, onClaimCell, onToggleSignal]);
 
   return (
     <section className="panel">
@@ -655,9 +671,10 @@ function FocusedScreenView({
           type="button"
           className={`focused-signal ${ownSignalState}`}
           onClick={onToggleSignal}
+          aria-label="Toggle stop/passthrough signal"
           title="Toggle stop/passthrough"
         >
-          {ownSignalState === 'red' ? 'Signal: STOP' : 'Signal: PASS'}
+          {ownSignalState === 'red' ? 'STOP' : 'PASS'}
         </button>
       </div>
       <p className="hint">
@@ -713,17 +730,17 @@ function TrainSprite({
 }) {
   return (
     <div className={`train-sprite ${className}${paused ? ' paused' : ''}`} style={style}>
-      <div className="train-car locomotive">
-        <span className="train-window" />
-      </div>
-      <div className="train-coupler" />
-      <div className="train-car carriage">
-        <span className="train-window" />
-      </div>
-      <span className="train-wheel wheel-a" />
-      <span className="train-wheel wheel-b" />
-      <span className="train-wheel wheel-c" />
-      <span className="train-wheel wheel-d" />
+      <svg viewBox="0 0 120 56" aria-hidden="true" className="train-svg">
+        <rect x="14" y="12" width="42" height="24" rx="6" className="train-locomotive" />
+        <rect x="34" y="18" width="12" height="10" rx="2" className="train-window" />
+        <rect x="62" y="20" width="8" height="5" rx="2.5" className="train-coupler" />
+        <rect x="74" y="14" width="34" height="22" rx="6" className="train-carriage" />
+        <rect x="82" y="20" width="12" height="8" rx="2" className="train-window" />
+        <circle cx="26" cy="40" r="5.5" className="train-wheel" />
+        <circle cx="44" cy="40" r="5.5" className="train-wheel" />
+        <circle cx="84" cy="40" r="5.5" className="train-wheel" />
+        <circle cx="100" cy="40" r="5.5" className="train-wheel" />
+      </svg>
     </div>
   );
 }

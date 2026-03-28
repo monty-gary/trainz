@@ -85,6 +85,9 @@ export function computeTrainState(snapshot: Snapshot | null, serverNowMs: number
   const direction = directionBetween(from, to);
 
   if (train.paused && train.pausedAt) {
+    const previousSegmentIndex = (segmentIndex - 1 + segmentCount) % segmentCount;
+    const previousNode = routeNodes[previousSegmentIndex] || train.pausedAt;
+
     return {
       segmentIndex,
       from: train.pausedAt,
@@ -92,7 +95,7 @@ export function computeTrainState(snapshot: Snapshot | null, serverNowMs: number
       progress: 0,
       worldX: train.pausedAt.x,
       worldY: train.pausedAt.y,
-      direction,
+      direction: directionBetween(previousNode, train.pausedAt),
       paused: true
     };
   }
