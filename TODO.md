@@ -1,0 +1,5 @@
+- Define the station layout: decide how many screens (stations) are visible, how they are arranged, and how to mark arrival/departure states.
+- Design the train payload schema: what metadata (sender, animation, commands) travels with each transition so receivers know how to react.
+- Prototype the realtime conduit: pick WebSocket vs. WebRTC, wire a simple conductor service, and log the train lifecycle.
+- Build the animation system: make trains slide between frames, pause on arrival, and allow users to dispatch new trains.
+- Document the expected developer workflow, including how to extend the conductor and swap in additional screens.
