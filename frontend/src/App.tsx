@@ -13,6 +13,7 @@ import {
   computeTileTrainState,
   computeTrainState,
   directionToDegrees,
+  directionToScaleX,
   pointKey,
   pointsEqual,
   shouldRenderTrainOnTile
@@ -320,7 +321,8 @@ function App() {
     return {
       '--train-x': `${x}px`,
       '--train-y': `${y}px`,
-      '--train-rotation': `${directionToDegrees(trainState.direction)}deg`
+      '--train-rotation': `${directionToDegrees(trainState.direction)}deg`,
+      '--train-scale-x': `${directionToScaleX(trainState.direction)}`
     } as CSSProperties;
   }, [snapshot, trainState]);
 
@@ -340,7 +342,8 @@ function App() {
     return {
       left: `${focusedTileTrain.x}%`,
       top: `${focusedTileTrain.y}%`,
-      '--train-rotation': `${directionToDegrees(trainState.direction)}deg`
+      '--train-rotation': `${directionToDegrees(trainState.direction)}deg`,
+      '--train-scale-x': `${directionToScaleX(trainState.direction)}`
     } as CSSProperties;
   }, [focusedTileTrain, trainState]);
   const shouldRenderFocusedTrain = useMemo(
@@ -518,6 +521,7 @@ function App() {
           trainPaused={Boolean(trainState?.paused)}
           wagonSlots={snapshot.wagonSlots}
           composition={snapshot.trainComposition}
+          onExitFocus={() => setViewMode('screen')}
         />
       </main>
     );
@@ -1004,7 +1008,8 @@ function FocusTileView({
   showTrain,
   trainPaused,
   wagonSlots,
-  composition
+  composition,
+  onExitFocus
 }: {
   cell: Point;
   railsByKey: Map<string, RailTile>;
@@ -1013,11 +1018,12 @@ function FocusTileView({
   trainPaused: boolean;
   wagonSlots: FruitSlot[];
   composition: TrainComposition;
+  onExitFocus: () => void;
 }) {
   const ownRailEdges = railsByKey.get(pointKey(cell))?.edges || [];
   return (
     <section className="focus-stage">
-      <div className="focus-track">
+      <div className="focus-track" onPointerDownCapture={onExitFocus}>
         <RailGlyph edges={ownRailEdges} emphasized />
         {trainStyle && showTrain ? (
           <TrainSprite
@@ -1154,24 +1160,12 @@ function TrainSprite({
   return (
     <div className={`train-sprite ${className}${paused ? ' paused' : ''}`} style={style}>
       <svg viewBox="0 0 420 132" aria-hidden="true" className="train-svg">
-        <g className="locomotive-group">
-          <rect x="14" y="66" width="138" height="36" rx="7" className="train-base" />
-          <rect x="24" y="42" width="96" height="38" rx="8" className="train-locomotive" />
-          <rect x="62" y="34" width="36" height="14" rx="4" className="train-stack" />
-          <rect x="38" y="52" width="24" height="15" rx="3" className="train-window" />
-          <rect x="68" y="52" width="24" height="15" rx="3" className="train-window" />
-          <circle cx="40" cy="104" r="11" className="train-wheel" />
-          <circle cx="86" cy="104" r="11" className="train-wheel" />
-          <circle cx="128" cy="104" r="11" className="train-wheel" />
-        </g>
-
-        <rect x="157" y="80" width="18" height="6" rx="3" className="train-coupler" />
         <g className="wagon-group">
-          <rect x="178" y="70" width="98" height="32" rx="7" className="wagon-open" />
-          <rect x="184" y="64" width="86" height="9" rx="4" className="wagon-rim" />
-          <rect x="189" y="72" width="76" height="20" rx="3" className="wagon-bay" />
-          <circle cx="198" cy="104" r="10" className="train-wheel" />
-          <circle cx="256" cy="104" r="10" className="train-wheel" />
+          <rect x="14" y="70" width="102" height="32" rx="8" className="wagon-open" />
+          <rect x="20" y="64" width="90" height="9" rx="4" className="wagon-rim" />
+          <rect x="25" y="72" width="80" height="20" rx="4" className="wagon-bay" />
+          <circle cx="34" cy="104" r="10" className="train-wheel" />
+          <circle cx="96" cy="104" r="10" className="train-wheel" />
           {slotLayout[0]?.map((slotIndex, index) => {
             const fruit = normalizedWagonSlots[slotIndex];
             if (!fruit) {
@@ -1179,20 +1173,19 @@ function TrainSprite({
             }
 
             return (
-              <g key={`slot-a-${slotIndex}`} transform={`translate(${205 + index * 31} 77) scale(0.45)`}>
+              <g key={`slot-a-${slotIndex}`} transform={`translate(${30 + index * 30} 77) scale(0.44)`}>
                 <FruitSpriteMark fruit={fruit} />
               </g>
             );
           })}
         </g>
-
-        <rect x="281" y="80" width="18" height="6" rx="3" className="train-coupler" />
+        <rect x="120" y="80" width="16" height="6" rx="3" className="train-coupler" />
         <g className="wagon-group">
-          <rect x="302" y="70" width="104" height="32" rx="7" className="wagon-open" />
-          <rect x="308" y="64" width="92" height="9" rx="4" className="wagon-rim" />
-          <rect x="313" y="72" width="82" height="20" rx="3" className="wagon-bay" />
-          <circle cx="322" cy="104" r="10" className="train-wheel" />
-          <circle cx="386" cy="104" r="10" className="train-wheel" />
+          <rect x="140" y="70" width="106" height="32" rx="8" className="wagon-open" />
+          <rect x="146" y="64" width="94" height="9" rx="4" className="wagon-rim" />
+          <rect x="151" y="72" width="84" height="20" rx="4" className="wagon-bay" />
+          <circle cx="160" cy="104" r="10" className="train-wheel" />
+          <circle cx="226" cy="104" r="10" className="train-wheel" />
           {slotLayout[1]?.map((slotIndex, index) => {
             const fruit = normalizedWagonSlots[slotIndex];
             if (!fruit) {
@@ -1200,11 +1193,27 @@ function TrainSprite({
             }
 
             return (
-              <g key={`slot-b-${slotIndex}`} transform={`translate(${325 + index * 24} 77) scale(0.42)`}>
+              <g key={`slot-b-${slotIndex}`} transform={`translate(${165 + index * 24} 77) scale(0.42)`}>
                 <FruitSpriteMark fruit={fruit} />
               </g>
             );
           })}
+        </g>
+        <rect x="252" y="80" width="20" height="6" rx="3" className="train-coupler" />
+        <g className="locomotive-group">
+          <rect x="276" y="66" width="128" height="36" rx="8" className="train-base" />
+          <rect x="304" y="42" width="82" height="36" rx="8" className="train-locomotive" />
+          <rect x="334" y="31" width="24" height="15" rx="4" className="train-stack" />
+          <rect x="322" y="50" width="20" height="14" rx="3" className="train-window" />
+          <rect x="347" y="50" width="20" height="14" rx="3" className="train-window" />
+          <circle cx="294" cy="104" r="11" className="train-wheel" />
+          <circle cx="338" cy="104" r="11" className="train-wheel" />
+          <circle cx="384" cy="104" r="11" className="train-wheel" />
+          <path d="M388 56h10a8 8 0 0 1 8 8v6h-18z" className="train-locomotive" />
+          <circle cx="410" cy="67" r="4" className="train-window" />
+          <path d="M312 72h72" className="boiler-band" />
+          <path d="M312 62h72" className="boiler-band" />
+          <path d="M280 85h120" className="side-rod" />
         </g>
       </svg>
     </div>

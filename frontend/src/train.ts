@@ -150,8 +150,12 @@ export function directionToDegrees(direction: Direction): number {
     case 'S':
       return 90;
     case 'W':
-      return 180;
+      return 0;
   }
+}
+
+export function directionToScaleX(direction: Direction): number {
+  return direction === 'W' ? -1 : 1;
 }
 
 function lerp(start: number, end: number, amount: number): number {

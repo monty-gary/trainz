@@ -372,21 +372,21 @@ button.ghost {
 .train-sprite.lobby {
   left: 0;
   top: 0;
-  width: 118px;
-  height: 48px;
+  width: 86px;
+  height: 31px;
   transform: translate3d(var(--train-x, 0px), var(--train-y, 0px), 0) translate(-50%, -50%)
-    rotate(var(--train-rotation, 0deg));
+    rotate(var(--train-rotation, 0deg)) scaleX(var(--train-scale-x, 1));
 }
 
 .train-sprite.focused {
-  width: 150%;
+  width: 98%;
   max-width: none;
   aspect-ratio: 420 / 132;
-  transform: translate(-50%, -50%) rotate(var(--train-rotation, 0deg));
+  transform: translate(-50%, -50%) rotate(var(--train-rotation, 0deg)) scaleX(var(--train-scale-x, 1));
 }
 
 .train-sprite.focused.immersive {
-  width: 170%;
+  width: 112%;
 }
 
 .train-svg {
@@ -410,7 +410,7 @@ button.ghost {
 }
 
 .wagon-open {
-  fill: #6f8da0;
+  fill: #617f92;
   stroke: rgba(12, 14, 18, 0.82);
   stroke-width: 2;
 }
@@ -420,7 +420,7 @@ button.ghost {
 }
 
 .wagon-bay {
-  fill: rgba(26, 40, 54, 0.82);
+  fill: rgba(20, 31, 42, 0.85);
 }
 
 .train-coupler {
@@ -437,7 +437,21 @@ button.ghost {
 }
 
 .train-wheel {
-  fill: #141a20;
+  fill: #11161c;
+}
+
+.boiler-band {
+  fill: none;
+  stroke: rgba(13, 20, 26, 0.8);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.side-rod {
+  fill: none;
+  stroke: rgba(205, 225, 237, 0.88);
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 
 .train-sprite.paused .train-locomotive,
@@ -754,7 +768,7 @@ button.ghost {
 .drag-ghost {
   position: fixed;
   pointer-events: none;
-  transform: translate(-50%, -50%);
+  transform: translate(12px, 14px);
   border: 1px solid rgba(255, 217, 142, 0.72);
   background: rgba(19, 44, 63, 0.95);
   border-radius: 10px;
@@ -847,12 +861,16 @@ button.ghost {
   }
 
   .train-sprite.lobby {
-    width: 104px;
-    height: 42px;
+    width: 74px;
+    height: 28px;
   }
 
   .train-sprite.focused {
-    width: 175%;
+    width: 96%;
+  }
+
+  .train-sprite.focused.immersive {
+    width: 108%;
   }
 
   .focused-signal {
