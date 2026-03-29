@@ -20,9 +20,16 @@ Each browser/device acts as one tile in a shared grid. Participants authenticate
   - `green` = passthrough
   - only the tile owner can toggle, but everyone sees current signal state
 4. Focused screen view
-- highlights the claimed tile
-- shows local track geometry, signal mode, and a stylized locomotive + carriage entering/exiting through the correct edges
+- highlights the claimed tile with a larger locomotive + wagon and a readable overlapping signal node
+- shows local track geometry, signal mode, and train entering/exiting through the correct edges
+- shows tile fruit inventory (5 slots) and shared wagon cargo slots (5 slots)
+- supports pointer drag/drop (mouse and touch) between tile slots, wagon slots, and discard
 - users can return to lobby at any time
+5. Fruit cargo transfer loop
+- each claimed tile gets 5 fruit slots
+- when a tile is claimed, the backend seeds exactly 3 random fruit slots from `apple|banana|pear|grapes|peach`
+- owner can load/unload the shared wagon while the train is stopped at their tile
+- another owner can stop the same train at their tile and unload/swap fruit into their own tile slots
 
 ## Backend architecture (`backend/server.js`)
 - In-memory session state keyed by stable `clientId`
@@ -30,6 +37,11 @@ Each browser/device acts as one tile in a shared grid. Participants authenticate
 - Session check endpoint `GET /api/session`
 - WebSocket endpoint `/ws` for realtime snapshots + client actions
 - Per-claimed-tile signal state (`red` stop / `green` passthrough), owner-toggled
+- Server-authoritative fruit state:
+- `tileSlots` (5) on each claimed tile
+- one shared `wagonSlots` inventory (5) synchronized to all clients
+- deterministic server-side fruit seeding on claim
+- tile release removes that tile's fruit inventory
 - Deterministic topology and route generation:
 - occupied cells = station + claimed user cells
 - BFS spanning tree rooted at station
@@ -102,12 +114,15 @@ WebSocket client messages:
 - `claim_cell`
 - `release_cell`
 - `toggle_signal`
+- `move_fruit` (`from` tile/wagon slot -> `to` tile/wagon slot or `discard`)
 - `ping`
 
 Server broadcasts state snapshots with:
 - grid + station
 - claimed cells and claimable cells
 - signal state on each claimed tile
+- tile slots
+- shared wagon slots
 - per-tile rail edges
 - route nodes
 - schedule timestamps
@@ -119,3 +134,14 @@ Server broadcasts state snapshots with:
 - When the train reaches a claimed tile with a `red` signal, it pauses at that tile center.
 - Toggling that tile back to `green` resumes motion from the backend state machine.
 - If multiple red signals exist, the train stops deterministically at the next red tile encountered on the current route.
+
+## Cargo transfer rule
+- Cargo moves are backend-validated and rejected unless all conditions hold:
+- requesting client owns a currently claimed tile
+- train is paused
+- paused train tile equals the requesting client's claimed tile
+- When allowed, clients can drag/drop to swap:
+- tile <-> wagon
+- tile <-> tile (reorder/swap)
+- wagon <-> wagon (reorder/swap)
+- and can discard by dropping to `discard`.

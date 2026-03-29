@@ -1,17 +1,29 @@
-import { CSSProperties, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  CSSProperties,
+  FormEvent,
+  PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
 import { API_BASE_URL, WS_URL, authenticate, getSession } from './api';
 import {
   computeTileTrainState,
   computeTrainState,
   directionToDegrees,
   edgePosition,
-  pointKey
+  pointKey,
+  pointsEqual
 } from './train';
 import type {
+  CargoZone,
   ClaimedCell,
   ClientMessage,
   ClientState,
   Direction,
+  FruitType,
   Point,
   RailTile,
   ServerMessage,
@@ -23,10 +35,36 @@ const STORAGE_AUTH_TOKEN = 'trainz.authToken';
 const STORAGE_USERNAME = 'trainz.username';
 const LOBBY_CELL_SIZE = 72;
 const LOBBY_CELL_GAP = 8;
+const FRUIT_SLOT_COUNT = 5;
+
+const FRUIT_META: Record<FruitType, { short: string; label: string }> = {
+  apple: { short: 'APL', label: 'Apple' },
+  banana: { short: 'BAN', label: 'Banana' },
+  pear: { short: 'PER', label: 'Pear' },
+  grapes: { short: 'GRP', label: 'Grapes' },
+  peach: { short: 'PCH', label: 'Peach' }
+};
 
 type AuthPhase = 'checking' | 'required' | 'ready';
 type ConnectionState = 'offline' | 'connecting' | 'online';
 type ViewMode = 'lobby' | 'screen';
+type FruitSlot = FruitType | null;
+
+interface FruitSlotRef {
+  zone: CargoZone;
+  slot: number;
+}
+
+type FruitDropTarget = FruitSlotRef | { zone: 'discard' };
+
+interface DragState {
+  pointerId: number;
+  source: FruitSlotRef;
+  fruit: FruitType;
+  x: number;
+  y: number;
+  overTargetId: string | null;
+}
 
 function App() {
   const [clientId] = useState<string>(getOrCreateClientId);
@@ -290,6 +328,13 @@ function App() {
     } as CSSProperties;
   }, [focusedTileTrain, trainState]);
 
+  const canMoveCargo = Boolean(
+    snapshot?.train.paused &&
+      snapshot.train.pausedAt &&
+      self?.claimedCell &&
+      pointsEqual(snapshot.train.pausedAt, self.claimedCell)
+  );
+
   const handleClaimCell = useCallback(
     (cell: Point) => {
       setErrorMessage(null);
@@ -311,6 +356,18 @@ function App() {
     setInfoMessage('Signal toggle requested.');
     sendWsMessage({ type: 'toggle_signal' });
   }, [sendWsMessage]);
+
+  const handleMoveFruit = useCallback(
+    (source: FruitSlotRef, target: FruitDropTarget) => {
+      setErrorMessage(null);
+      sendWsMessage({
+        type: 'move_fruit',
+        from: source,
+        to: target
+      });
+    },
+    [sendWsMessage]
+  );
 
   async function handlePasswordSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -481,6 +538,7 @@ function App() {
             claimableSet={claimableSet}
             canClaim={!hasClaimedCell}
             selfClientId={clientId}
+            wagonSlots={snapshot.wagonSlots}
             trainMarkerStyle={trainMarkerStyle}
             trainPaused={Boolean(trainState?.paused)}
             onClaimCell={handleClaimCell}
@@ -494,9 +552,13 @@ function App() {
             self={self}
             railsByKey={railsByKey}
             claimedCells={snapshot.claimedCells}
+            tileSlots={normalizeSlots(self.tileSlots)}
+            wagonSlots={snapshot.wagonSlots}
+            canMoveCargo={canMoveCargo}
             trainTileState={focusedTileTrain}
             trainStyle={focusedTrainStyle}
             onToggleSignal={handleToggleSignal}
+            onMoveFruit={handleMoveFruit}
           />
         ) : null}
 
@@ -514,6 +576,7 @@ interface LobbyMapProps {
   claimableSet: Set<string>;
   canClaim: boolean;
   selfClientId: string;
+  wagonSlots: FruitSlot[];
   trainMarkerStyle: CSSProperties | null;
   trainPaused: boolean;
   onClaimCell: (cell: Point) => void;
@@ -527,11 +590,14 @@ function LobbyMap({
   claimableSet,
   canClaim,
   selfClientId,
+  wagonSlots,
   trainMarkerStyle,
   trainPaused,
   onClaimCell,
   onToggleSignal
 }: LobbyMapProps) {
+  const wagonLoad = countFruit(wagonSlots);
+
   const cells = useMemo(() => {
     const renderedCells: JSX.Element[] = [];
 
@@ -544,6 +610,7 @@ function LobbyMap({
         const isClaimable = claimableSet.has(key);
         const isSelf = claimed?.clientId === selfClientId;
         const signalState = claimed?.signalState === 'red' ? 'red' : 'green';
+        const localFruit = claimed ? countFruit(claimed.tileSlots) : 0;
 
         let cellClass = 'cell';
         if (isStation) {
@@ -564,6 +631,7 @@ function LobbyMap({
                 {claimed.connected ? '' : ' (offline)'}
               </span>
             ) : null}
+            {claimed ? <span className="cargo-badge">Fruit {localFruit}/5</span> : null}
             {claimed ? (
               <button
                 type="button"
@@ -599,7 +667,7 @@ function LobbyMap({
       <h2>Shared topology map</h2>
       <p>
         Tap your signal zone to toggle stop/passthrough. Route segments: {snapshot.schedule.segmentCount}. Cycle time:{' '}
-        {Math.round(snapshot.schedule.cycleDurationMs / 1000)}s.
+        {Math.round(snapshot.schedule.cycleDurationMs / 1000)}s. Wagon load: {wagonLoad}/5.
       </p>
       <div className="grid-wrap">
         <div
@@ -612,7 +680,7 @@ function LobbyMap({
         >
           {cells}
           {trainMarkerStyle ? (
-            <TrainSprite className="lobby" style={trainMarkerStyle} paused={trainPaused} />
+            <TrainSprite className="lobby" style={trainMarkerStyle} paused={trainPaused} wagonLoad={wagonLoad} />
           ) : null}
         </div>
       </div>
@@ -625,9 +693,13 @@ interface FocusedScreenViewProps {
   self: ClientState;
   railsByKey: Map<string, RailTile>;
   claimedCells: ClaimedCell[];
+  tileSlots: FruitSlot[];
+  wagonSlots: FruitSlot[];
+  canMoveCargo: boolean;
   trainTileState: ReturnType<typeof computeTileTrainState>;
   trainStyle: CSSProperties | null;
   onToggleSignal: () => void;
+  onMoveFruit: (source: FruitSlotRef, target: FruitDropTarget) => void;
 }
 
 function FocusedScreenView({
@@ -635,22 +707,111 @@ function FocusedScreenView({
   self,
   railsByKey,
   claimedCells,
+  tileSlots,
+  wagonSlots,
+  canMoveCargo,
   trainTileState,
   trainStyle,
-  onToggleSignal
+  onToggleSignal,
+  onMoveFruit
 }: FocusedScreenViewProps) {
   const ownRailEdges = railsByKey.get(pointKey(cell))?.edges || [];
   const ownSignalState = self.signalState === 'red' ? 'red' : 'green';
+  const canDrag = canMoveCargo;
+  const [dragState, setDragState] = useState<DragState | null>(null);
+
+  const wagonLoad = countFruit(wagonSlots);
+  const tileLoad = countFruit(tileSlots);
+
+  useEffect(() => {
+    if (!dragState) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== dragState.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      setDragState((previous) => {
+        if (!previous) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          x: event.clientX,
+          y: event.clientY,
+          overTargetId: findDropTargetId(event.clientX, event.clientY)
+        };
+      });
+    };
+
+    const finishDrag = (event: PointerEvent) => {
+      if (event.pointerId !== dragState.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      const targetId = findDropTargetId(event.clientX, event.clientY);
+      const sourceId = slotToTargetId(dragState.source);
+      const parsedTarget = parseDropTargetId(targetId);
+
+      if (parsedTarget && sourceId !== targetId) {
+        onMoveFruit(dragState.source, parsedTarget);
+      }
+
+      setDragState(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: false });
+    window.addEventListener('pointerup', finishDrag, { passive: false });
+    window.addEventListener('pointercancel', finishDrag, { passive: false });
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', finishDrag);
+    };
+  }, [dragState, onMoveFruit]);
 
   const networkSignals = useMemo(() => {
     return claimedCells
       .map((entry) => ({
         id: entry.clientId,
         label: `${entry.username} (${entry.x}, ${entry.y})`,
-        signalState: entry.signalState
+        signalState: entry.signalState,
+        fruitCount: countFruit(entry.tileSlots)
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [claimedCells]);
+
+  const sourceTargetId = dragState ? slotToTargetId(dragState.source) : null;
+
+  const handleFruitPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>, source: FruitSlotRef, fruit: FruitSlot) => {
+      if (!fruit || !canDrag) {
+        return;
+      }
+
+      if (event.pointerType === 'mouse' && event.button !== 0) {
+        return;
+      }
+
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setDragState({
+        pointerId: event.pointerId,
+        source,
+        fruit,
+        x: event.clientX,
+        y: event.clientY,
+        overTargetId: findDropTargetId(event.clientX, event.clientY)
+      });
+    },
+    [canDrag]
+  );
 
   return (
     <section className="panel focused">
@@ -658,43 +819,169 @@ function FocusedScreenView({
       <p>
         {self.username} at ({cell.x}, {cell.y})
       </p>
-      <div className="focused-tile">
-        <RailGlyph edges={ownRailEdges} emphasized />
-        {trainStyle && trainTileState ? (
-          <TrainSprite
-            className="focused"
-            style={trainStyle}
-            paused={trainTileState.movement === 'paused'}
-          />
-        ) : null}
-        <button
-          type="button"
-          className={`focused-signal ${ownSignalState}`}
-          onClick={onToggleSignal}
-          aria-label="Toggle stop/passthrough signal"
-          title="Toggle stop/passthrough"
-        >
-          {ownSignalState === 'red' ? 'STOP' : 'PASS'}
-        </button>
+
+      <div className="focused-layout">
+        <div className="tile-area">
+          <div className="focused-tile">
+            <RailGlyph edges={ownRailEdges} emphasized />
+            {trainStyle && trainTileState ? (
+              <TrainSprite
+                className="focused"
+                style={trainStyle}
+                paused={trainTileState.movement === 'paused'}
+                wagonLoad={wagonLoad}
+              />
+            ) : null}
+            <button
+              type="button"
+              className={`focused-signal ${ownSignalState}`}
+              onClick={onToggleSignal}
+              aria-label="Toggle stop/passthrough signal"
+              title="Toggle stop/passthrough"
+            >
+              {ownSignalState === 'red' ? 'STOP' : 'PASS'}
+            </button>
+          </div>
+          <p className="hint">
+            Signal remains clickable while train overlaps it. Drag fruit only when train is stopped at your tile.
+          </p>
+        </div>
+
+        <div className="cargo-area">
+          <div className="cargo-section">
+            <h3>My tile fruit ({tileLoad}/5)</h3>
+            <div className="slot-row">
+              {tileSlots.map((fruit, index) => {
+                const targetId = `tile:${index}`;
+                return (
+                  <FruitSlotButton
+                    key={targetId}
+                    targetId={targetId}
+                    title={`Tile slot ${index + 1}`}
+                    fruit={fruit}
+                    canDrag={canDrag}
+                    isDragSource={sourceTargetId === targetId}
+                    isDropHover={dragState?.overTargetId === targetId}
+                    onPointerDown={(event) =>
+                      handleFruitPointerDown(event, { zone: 'tile', slot: index }, fruit)
+                    }
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="cargo-section">
+            <h3>Wagon cargo ({wagonLoad}/5)</h3>
+            <div className="slot-row wagon">
+              {normalizeSlots(wagonSlots).map((fruit, index) => {
+                const targetId = `wagon:${index}`;
+                return (
+                  <FruitSlotButton
+                    key={targetId}
+                    targetId={targetId}
+                    title={`Wagon slot ${index + 1}`}
+                    fruit={fruit}
+                    canDrag={canDrag}
+                    isDragSource={sourceTargetId === targetId}
+                    isDropHover={dragState?.overTargetId === targetId}
+                    onPointerDown={(event) =>
+                      handleFruitPointerDown(event, { zone: 'wagon', slot: index }, fruit)
+                    }
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          <div
+            className={`void-target${dragState?.overTargetId === 'discard' ? ' drag-over' : ''}`}
+            data-drop-target="discard"
+          >
+            Drop here to discard fruit from tile or wagon
+          </div>
+
+          <p className={`hint cargo-access${canDrag ? ' allowed' : ''}`}>
+            {canDrag
+              ? 'Cargo unlocked: drag fruit between your tile and the shared wagon, or discard.'
+              : 'Cargo locked: pause the train at your own tile before moving fruit.'}
+          </p>
+        </div>
       </div>
-      <p className="hint">
-        Red holds the train at this station point. Green releases it onto the next route segment.
-      </p>
+
       <div className="neighbor-list">
         {networkSignals.length > 0 ? (
           networkSignals.map((entry) => (
             <div key={entry.id} className="neighbor-item">
               <strong>{entry.label}</strong>
-              <span className={`signal-pill ${entry.signalState}`}>
-                {entry.signalState === 'red' ? 'STOP' : 'PASS'}
-              </span>
+              <div className="neighbor-meta">
+                <span className="fruit-pill">Fruit {entry.fruitCount}/5</span>
+                <span className={`signal-pill ${entry.signalState}`}>
+                  {entry.signalState === 'red' ? 'STOP' : 'PASS'}
+                </span>
+              </div>
             </div>
           ))
         ) : (
           <p className="hint">No claimed tiles yet.</p>
         )}
       </div>
+
+      {dragState ? (
+        <div
+          className="drag-ghost"
+          style={{
+            left: `${dragState.x}px`,
+            top: `${dragState.y}px`
+          }}
+        >
+          <FruitVisual fruit={dragState.fruit} />
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+function FruitSlotButton({
+  targetId,
+  title,
+  fruit,
+  canDrag,
+  isDragSource,
+  isDropHover,
+  onPointerDown
+}: {
+  targetId: string;
+  title: string;
+  fruit: FruitSlot;
+  canDrag: boolean;
+  isDragSource: boolean;
+  isDropHover: boolean | undefined;
+  onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`fruit-slot${fruit ? ' filled' : ''}${canDrag ? '' : ' disabled'}${
+        isDragSource ? ' drag-source' : ''
+      }${isDropHover ? ' drag-over' : ''}`}
+      data-drop-target={targetId}
+      onPointerDown={onPointerDown}
+      title={title}
+      aria-label={fruit ? `${title}, ${FRUIT_META[fruit].label}` : `${title}, empty`}
+    >
+      {fruit ? <FruitVisual fruit={fruit} /> : <span className="empty-slot">Empty</span>}
+    </button>
+  );
+}
+
+function FruitVisual({ fruit }: { fruit: FruitType }) {
+  const meta = FRUIT_META[fruit];
+  return (
+    <span className="fruit-token">
+      <span className="fruit-code">{meta.short}</span>
+      <span className="fruit-name">{meta.label}</span>
+    </span>
   );
 }
 
@@ -722,24 +1009,40 @@ function RailGlyph({ edges, emphasized = false }: { edges: Direction[]; emphasiz
 function TrainSprite({
   className,
   style,
-  paused
+  paused,
+  wagonLoad
 }: {
   className: 'lobby' | 'focused';
   style: CSSProperties;
   paused: boolean;
+  wagonLoad: number;
 }) {
+  const cargoDots = new Array(5).fill(0).map((_, index) => ({
+    x: 125 + index * 8,
+    active: index < wagonLoad
+  }));
+
   return (
     <div className={`train-sprite ${className}${paused ? ' paused' : ''}`} style={style}>
-      <svg viewBox="0 0 120 56" aria-hidden="true" className="train-svg">
-        <rect x="14" y="12" width="42" height="24" rx="6" className="train-locomotive" />
-        <rect x="34" y="18" width="12" height="10" rx="2" className="train-window" />
-        <rect x="62" y="20" width="8" height="5" rx="2.5" className="train-coupler" />
-        <rect x="74" y="14" width="34" height="22" rx="6" className="train-carriage" />
-        <rect x="82" y="20" width="12" height="8" rx="2" className="train-window" />
-        <circle cx="26" cy="40" r="5.5" className="train-wheel" />
-        <circle cx="44" cy="40" r="5.5" className="train-wheel" />
-        <circle cx="84" cy="40" r="5.5" className="train-wheel" />
-        <circle cx="100" cy="40" r="5.5" className="train-wheel" />
+      <svg viewBox="0 0 182 72" aria-hidden="true" className="train-svg">
+        <rect x="14" y="18" width="68" height="34" rx="9" className="train-locomotive" />
+        <rect x="38" y="26" width="20" height="14" rx="3" className="train-window" />
+        <rect x="88" y="32" width="12" height="7" rx="3" className="train-coupler" />
+        <rect x="106" y="20" width="62" height="32" rx="8" className="train-carriage" />
+        <rect x="113" y="27" width="24" height="11" rx="3" className="train-window" />
+        {cargoDots.map((dot) => (
+          <circle
+            key={dot.x}
+            cx={dot.x}
+            cy="44"
+            r="3.2"
+            className={dot.active ? 'wagon-cargo on' : 'wagon-cargo'}
+          />
+        ))}
+        <circle cx="30" cy="56" r="7" className="train-wheel" />
+        <circle cx="58" cy="56" r="7" className="train-wheel" />
+        <circle cx="122" cy="56" r="7" className="train-wheel" />
+        <circle cx="153" cy="56" r="7" className="train-wheel" />
       </svg>
     </div>
   );
@@ -755,6 +1058,67 @@ function safeParseMessage(raw: unknown): ServerMessage | null {
   } catch {
     return null;
   }
+}
+
+function countFruit(slots: FruitSlot[] | null): number {
+  if (!slots) {
+    return 0;
+  }
+
+  return slots.reduce((count, fruit) => (fruit ? count + 1 : count), 0);
+}
+
+function normalizeSlots(slots: FruitSlot[] | null | undefined): FruitSlot[] {
+  const normalized = new Array(FRUIT_SLOT_COUNT).fill(null) as FruitSlot[];
+
+  if (!slots) {
+    return normalized;
+  }
+
+  for (let index = 0; index < FRUIT_SLOT_COUNT; index += 1) {
+    normalized[index] = slots[index] || null;
+  }
+
+  return normalized;
+}
+
+function findDropTargetId(clientX: number, clientY: number): string | null {
+  const element = document.elementFromPoint(clientX, clientY);
+  const container = element?.closest('[data-drop-target]');
+  if (!container) {
+    return null;
+  }
+
+  return container.getAttribute('data-drop-target');
+}
+
+function parseDropTargetId(value: string | null): FruitDropTarget | null {
+  if (!value) {
+    return null;
+  }
+
+  if (value === 'discard') {
+    return { zone: 'discard' };
+  }
+
+  const [zone, slotRaw] = value.split(':');
+  if ((zone !== 'tile' && zone !== 'wagon') || slotRaw === undefined) {
+    return null;
+  }
+
+  const slot = Number(slotRaw);
+  if (!Number.isInteger(slot) || slot < 0 || slot >= FRUIT_SLOT_COUNT) {
+    return null;
+  }
+
+  return {
+    zone,
+    slot
+  };
+}
+
+function slotToTargetId(slot: FruitSlotRef): string {
+  return `${slot.zone}:${slot.slot}`;
 }
 
 function getOrCreateClientId(): string {

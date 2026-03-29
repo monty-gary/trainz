@@ -10,6 +10,10 @@ const TRAIN_TICK_INTERVAL_MS = 100;
 const SIGNAL_STOP = 'red';
 const SIGNAL_GO = 'green';
 const OPEN_STATE = 1;
+const FRUIT_SLOT_COUNT = 5;
+const FRUIT_STARTING_COUNT = 3;
+const FRUIT_TYPES = ['apple', 'banana', 'pear', 'grapes', 'peach'];
+const CARGO_RULE = 'Cargo transfers are only allowed while the train is stopped at your claimed tile.';
 
 const port = Number(process.env.PORT || 3000);
 const gridSize = normalizeGridSize(Number(process.env.GRID_SIZE || DEFAULT_GRID_SIZE));
@@ -31,6 +35,8 @@ let topologyRevision = 0;
 let scheduleRevision = 0;
 let railTiles = new Map();
 let routeNodes = [station, station];
+let claimSeedCounter = 0;
+let wagonSlots = createEmptySlots();
 let trainMotion = {
   segmentIndex: 0,
   segmentStartTimeMs: Date.now() + scheduleLeadMs,
@@ -216,6 +222,7 @@ wss.on('connection', (ws, clientId) => {
 
       session.claimedCell = { x, y };
       session.signalState = SIGNAL_GO;
+      session.tileSlots = createRandomizedTileSlots(session.clientId, { x, y });
       session.lastSeenAtMs = Date.now();
       recomputeTopologyAndSchedule();
       broadcastState();
@@ -229,6 +236,7 @@ wss.on('connection', (ws, clientId) => {
 
       session.claimedCell = null;
       session.signalState = null;
+      session.tileSlots = createEmptySlots();
       session.lastSeenAtMs = Date.now();
       recomputeTopologyAndSchedule();
       broadcastState();
@@ -245,6 +253,24 @@ wss.on('connection', (ws, clientId) => {
       session.lastSeenAtMs = Date.now();
       advanceTrain(Date.now());
 
+      broadcastState();
+      return;
+    }
+
+    if (message.type === 'move_fruit') {
+      const moveValidation = validateFruitMoveRequest(session, message);
+      if (!moveValidation.ok) {
+        sendError(ws, moveValidation.error);
+        return;
+      }
+
+      const result = applyFruitMove(session, moveValidation.request);
+      if (!result.ok) {
+        sendError(ws, result.error);
+        return;
+      }
+
+      session.lastSeenAtMs = Date.now();
       broadcastState();
       return;
     }
@@ -321,6 +347,7 @@ function getOrCreateClient(clientId) {
     username: null,
     claimedCell: null,
     signalState: null,
+    tileSlots: createEmptySlots(),
     connected: false,
     createdAtMs: Date.now(),
     lastSeenAtMs: Date.now()
@@ -336,6 +363,7 @@ function serializeClient(client) {
     username: client.username,
     claimedCell: client.claimedCell,
     signalState: client.signalState,
+    tileSlots: cloneSlots(client.tileSlots),
     connected: client.connected,
     lastSeenAtMs: client.lastSeenAtMs
   };
@@ -403,6 +431,213 @@ function parseWsMessage(raw) {
   } catch {
     return null;
   }
+}
+
+function createEmptySlots() {
+  return Array(FRUIT_SLOT_COUNT).fill(null);
+}
+
+function cloneSlots(slots) {
+  const cloned = createEmptySlots();
+
+  if (!Array.isArray(slots)) {
+    return cloned;
+  }
+
+  for (let index = 0; index < FRUIT_SLOT_COUNT; index += 1) {
+    const candidate = slots[index];
+    cloned[index] = FRUIT_TYPES.includes(candidate) ? candidate : null;
+  }
+
+  return cloned;
+}
+
+function createRandomizedTileSlots(clientId, cell) {
+  claimSeedCounter += 1;
+  const seed = hashString(`${clientId}:${cell.x},${cell.y}:${claimSeedCounter}`);
+  const random = createDeterministicRandom(seed);
+  const slots = createEmptySlots();
+  const slotIndexes = [...slots.keys()];
+
+  for (let count = 0; count < FRUIT_STARTING_COUNT && slotIndexes.length > 0; count += 1) {
+    const randomSlotListIndex = randomIndex(slotIndexes.length, random);
+    const slot = slotIndexes.splice(randomSlotListIndex, 1)[0];
+    slots[slot] = FRUIT_TYPES[randomIndex(FRUIT_TYPES.length, random)];
+  }
+
+  return slots;
+}
+
+function randomIndex(length, random = Math.random) {
+  if (length <= 1) {
+    return 0;
+  }
+
+  return Math.floor(random() * length);
+}
+
+function createDeterministicRandom(seed) {
+  let state = seed >>> 0;
+
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
+}
+
+function validateFruitMoveRequest(session, message) {
+  if (!session.claimedCell) {
+    return { ok: false, error: 'claim a tile before moving fruit' };
+  }
+
+  const cargoAccess = getCargoAccess(session);
+  if (!cargoAccess.allowed) {
+    return { ok: false, error: `${cargoAccess.reason} ${CARGO_RULE}` };
+  }
+
+  if (!message || typeof message !== 'object') {
+    return { ok: false, error: 'invalid move request' };
+  }
+
+  const from = parseFruitMoveEndpoint(message.from ?? message.source, false);
+  const to = parseFruitMoveEndpoint(message.to ?? message.target, true);
+
+  if (!from) {
+    return { ok: false, error: 'invalid source slot' };
+  }
+
+  if (!to) {
+    return { ok: false, error: 'invalid destination slot' };
+  }
+
+  if (to.zone !== 'discard' && from.zone === to.zone && from.slot === to.slot) {
+    return { ok: false, error: 'source and destination are the same slot' };
+  }
+
+  return {
+    ok: true,
+    request: {
+      from,
+      to
+    }
+  };
+}
+
+function parseFruitMoveEndpoint(value, allowDiscard) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const zone = value.zone ?? value.kind;
+  if (allowDiscard && (zone === 'discard' || zone === 'void')) {
+    return {
+      zone: 'discard'
+    };
+  }
+
+  if (zone !== 'tile' && zone !== 'wagon') {
+    return null;
+  }
+
+  if (!Number.isInteger(value.slot) || value.slot < 0 || value.slot >= FRUIT_SLOT_COUNT) {
+    return null;
+  }
+
+  return {
+    zone,
+    slot: value.slot
+  };
+}
+
+function applyFruitMove(session, request) {
+  const sourceSlots = getSlotsByZone(session, request.from.zone);
+  if (!sourceSlots) {
+    return { ok: false, error: 'invalid source zone' };
+  }
+
+  const fruit = sourceSlots[request.from.slot];
+  if (!fruit) {
+    return { ok: false, error: 'source slot is empty' };
+  }
+
+  if (request.to.zone === 'discard') {
+    sourceSlots[request.from.slot] = null;
+    return { ok: true };
+  }
+
+  const targetSlots = getSlotsByZone(session, request.to.zone);
+  if (!targetSlots) {
+    return { ok: false, error: 'invalid destination zone' };
+  }
+
+  const targetFruit = targetSlots[request.to.slot];
+  sourceSlots[request.from.slot] = targetFruit;
+  targetSlots[request.to.slot] = fruit;
+  return { ok: true };
+}
+
+function getSlotsByZone(session, zone) {
+  if (zone === 'tile') {
+    return session.tileSlots;
+  }
+
+  if (zone === 'wagon') {
+    return wagonSlots;
+  }
+
+  return null;
+}
+
+function getCargoAccess(session) {
+  if (!session.claimedCell) {
+    return {
+      allowed: false,
+      reason: 'Claim a tile to move cargo.'
+    };
+  }
+
+  if (!trainMotion.pausedAtPoint) {
+    return {
+      allowed: false,
+      reason: 'Train is moving. Stop it at your tile first.'
+    };
+  }
+
+  if (!pointsEqual(trainMotion.pausedAtPoint, session.claimedCell)) {
+    return {
+      allowed: false,
+      reason: 'Train is stopped at a different tile.'
+    };
+  }
+
+  if (!Array.isArray(session.tileSlots)) {
+    return {
+      allowed: false,
+      reason: 'Your tile has no fruit slots available.'
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: 'Cargo transfer available.'
+  };
+}
+
+function pointsEqual(a, b) {
+  return Boolean(a && b && a.x === b.x && a.y === b.y);
 }
 
 function sendJson(ws, payload) {
@@ -505,6 +740,8 @@ function buildSnapshot(clientId) {
   const now = Date.now();
   const cycleStartTimeMs = trainMotion.segmentStartTimeMs - trainMotion.segmentIndex * trainSegmentDurationMs;
   const claimedCells = [];
+  const selfClient = getOrCreateClient(clientId);
+  const cargoAccess = getCargoAccess(selfClient);
 
   for (const client of clients.values()) {
     if (client.claimedCell && client.username) {
@@ -513,7 +750,8 @@ function buildSnapshot(clientId) {
         clientId: client.clientId,
         username: client.username,
         connected: client.connected,
-        signalState: client.signalState === SIGNAL_STOP ? SIGNAL_STOP : SIGNAL_GO
+        signalState: client.signalState === SIGNAL_STOP ? SIGNAL_STOP : SIGNAL_GO,
+        tileSlots: cloneSlots(client.tileSlots)
       });
     }
   }
@@ -565,8 +803,11 @@ function buildSnapshot(clientId) {
       paused: Boolean(trainMotion.pausedAtPoint),
       pausedAt: trainMotion.pausedAtPoint
     },
+    wagonSlots: cloneSlots(wagonSlots),
+    cargoRule: CARGO_RULE,
+    cargoAccess,
     clients: clientsList,
-    self: serializeClient(getOrCreateClient(clientId))
+    self: serializeClient(selfClient)
   };
 }
 

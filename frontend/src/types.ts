@@ -1,5 +1,8 @@
 export type Direction = 'N' | 'E' | 'S' | 'W';
 export type SignalState = 'red' | 'green';
+export type FruitType = 'apple' | 'banana' | 'pear' | 'grapes' | 'peach';
+export type CargoZone = 'tile' | 'wagon';
+export type FruitSlot = FruitType | null;
 
 export interface Point {
   x: number;
@@ -11,6 +14,7 @@ export interface ClientState {
   username: string | null;
   claimedCell: Point | null;
   signalState: SignalState | null;
+  tileSlots: FruitSlot[];
   connected: boolean;
   lastSeenAtMs: number;
 }
@@ -20,6 +24,7 @@ export interface ClaimedCell extends Point {
   username: string;
   connected: boolean;
   signalState: SignalState;
+  tileSlots: FruitSlot[];
 }
 
 export interface RailTile extends Point {
@@ -53,6 +58,12 @@ export interface Snapshot {
   topologyRevision: number;
   schedule: TrainSchedule;
   train: TrainRuntime;
+  wagonSlots: FruitSlot[];
+  cargoRule?: string;
+  cargoAccess?: {
+    allowed: boolean;
+    reason: string;
+  };
   clients: ClientState[];
   self: ClientState;
 }
@@ -96,6 +107,21 @@ export type ClientMessage =
     }
   | {
       type: 'toggle_signal';
+    }
+  | {
+      type: 'move_fruit';
+      from: {
+        zone: CargoZone;
+        slot: number;
+      };
+      to:
+        | {
+            zone: CargoZone;
+            slot: number;
+          }
+        | {
+            zone: 'discard';
+          };
     }
   | {
       type: 'ping';
