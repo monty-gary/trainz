@@ -14,6 +14,14 @@ const FRUIT_SLOT_COUNT = 5;
 const FRUIT_STARTING_COUNT = 3;
 const FRUIT_TYPES = ['apple', 'banana', 'pear', 'grapes', 'peach'];
 const CARGO_RULE = 'Cargo transfers are only allowed while the train is stopped at your claimed tile.';
+const TRAIN_COMPOSITION = {
+  wagonCount: 2,
+  wagonSlotLayout: [
+    [0, 1],
+    [2, 3, 4]
+  ],
+  totalCargoSlots: FRUIT_SLOT_COUNT
+};
 
 const port = Number(process.env.PORT || 3000);
 const gridSize = normalizeGridSize(Number(process.env.GRID_SIZE || DEFAULT_GRID_SIZE));
@@ -803,6 +811,7 @@ function buildSnapshot(clientId) {
       paused: Boolean(trainMotion.pausedAtPoint),
       pausedAt: trainMotion.pausedAtPoint
     },
+    trainComposition: TRAIN_COMPOSITION,
     wagonSlots: cloneSlots(wagonSlots),
     cargoRule: CARGO_RULE,
     cargoAccess,

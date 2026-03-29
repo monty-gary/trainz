@@ -44,6 +44,12 @@ body {
   place-items: center;
 }
 
+.focus-shell {
+  min-height: 100vh;
+  width: 100%;
+  display: grid;
+}
+
 .card,
 .app-frame {
   width: min(1180px, 100%);
@@ -321,20 +327,37 @@ button.ghost {
   height: 100%;
 }
 
-.rail-segment {
-  stroke: var(--line-muted);
-  stroke-width: 9;
+.track-bed {
+  fill: none;
+  stroke: rgba(27, 36, 45, 0.85);
+  stroke-width: 16;
   stroke-linecap: round;
 }
 
-.rail-svg.emphasized .rail-segment {
-  stroke: var(--line);
+.track-ties {
+  fill: none;
+  stroke: rgba(126, 96, 67, 0.65);
+  stroke-width: 10;
+  stroke-linecap: butt;
+  stroke-dasharray: 2 10;
 }
 
-.rail-hub {
-  fill: #bceeff;
-  stroke: #1c4360;
-  stroke-width: 2.8;
+.track-rail {
+  fill: none;
+  stroke: #a3b9c8;
+  stroke-width: 8;
+  stroke-linecap: round;
+}
+
+.track-rail-inner {
+  fill: none;
+  stroke: #2d3a45;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.rail-svg.emphasized .track-rail {
+  stroke: #d2ebff;
 }
 
 .train-sprite {
@@ -349,16 +372,21 @@ button.ghost {
 .train-sprite.lobby {
   left: 0;
   top: 0;
-  width: 58px;
-  height: 30px;
+  width: 118px;
+  height: 48px;
   transform: translate3d(var(--train-x, 0px), var(--train-y, 0px), 0) translate(-50%, -50%)
     rotate(var(--train-rotation, 0deg));
 }
 
 .train-sprite.focused {
-  width: 132px;
-  height: 56px;
+  width: 150%;
+  max-width: none;
+  aspect-ratio: 420 / 132;
   transform: translate(-50%, -50%) rotate(var(--train-rotation, 0deg));
+}
+
+.train-sprite.focused.immersive {
+  width: 170%;
 }
 
 .train-svg {
@@ -367,46 +395,77 @@ button.ghost {
   display: block;
 }
 
+.train-base {
+  fill: #4b5963;
+}
+
 .train-locomotive {
-  fill: #f7a348;
+  fill: #d4672f;
   stroke: rgba(12, 14, 18, 0.82);
   stroke-width: 2;
 }
 
-.train-carriage {
-  fill: #4fb8eb;
+.train-stack {
+  fill: #2d3338;
+}
+
+.wagon-open {
+  fill: #6f8da0;
   stroke: rgba(12, 14, 18, 0.82);
   stroke-width: 2;
+}
+
+.wagon-rim {
+  fill: #b8d0df;
+}
+
+.wagon-bay {
+  fill: rgba(26, 40, 54, 0.82);
+}
+
+.train-coupler {
+  fill: #3f4f5d;
+}
+
+.locomotive-group,
+.wagon-group {
+  stroke: rgba(12, 14, 18, 0.82);
 }
 
 .train-window {
   fill: #eaf9ff;
 }
 
-.train-coupler {
-  fill: #132130;
-}
-
 .train-wheel {
-  fill: #090c11;
-}
-
-.wagon-cargo {
-  fill: rgba(13, 28, 40, 0.55);
-}
-
-.wagon-cargo.on {
-  fill: #ffd675;
+  fill: #141a20;
 }
 
 .train-sprite.paused .train-locomotive,
-.train-sprite.paused .train-carriage {
+.train-sprite.paused .wagon-open {
   filter: saturate(0.88) brightness(0.92);
 }
 
 .focused {
   display: grid;
   gap: 0.9rem;
+}
+
+.focus-stage {
+  width: 100%;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.focus-track {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(82, 212, 255, 0.2), transparent 28%),
+    radial-gradient(circle at 86% 14%, rgba(255, 187, 101, 0.24), transparent 32%),
+    linear-gradient(165deg, rgba(14, 36, 57, 0.94), rgba(7, 18, 30, 0.98));
 }
 
 .focused-layout {
@@ -489,6 +548,44 @@ button.ghost {
   grid-template-columns: repeat(5, minmax(60px, 1fr));
 }
 
+.wagon-yard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.wagon-card {
+  border-radius: 10px;
+  border: 1px solid rgba(124, 174, 201, 0.46);
+  background:
+    linear-gradient(180deg, rgba(175, 201, 218, 0.9) 0 9%, transparent 9%),
+    linear-gradient(165deg, rgba(51, 76, 97, 0.95), rgba(26, 41, 58, 0.98));
+  padding: 0.35rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.wagon-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #dceeff;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wagon-slot-grid {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.wagon-slot-grid.slots-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wagon-slot-grid.slots-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .fruit-slot {
   min-height: 62px;
   border-radius: 10px;
@@ -524,14 +621,52 @@ button.ghost {
 .fruit-token {
   display: grid;
   justify-items: center;
-  gap: 0.1rem;
+  gap: 0.2rem;
 }
 
-.fruit-code {
-  font-family: 'Space Mono', monospace;
-  font-weight: 700;
-  font-size: 0.76rem;
-  color: #ffdf95;
+.fruit-sprite {
+  width: 30px;
+  height: 30px;
+  display: block;
+}
+
+.stem {
+  fill: #6d4328;
+}
+
+.leaf {
+  fill: #64b850;
+}
+
+.fruit-fill.apple {
+  fill: #dd5141;
+}
+
+.fruit-fill.banana {
+  fill: #f4d85f;
+}
+
+.fruit-fill.pear {
+  fill: #9bd760;
+}
+
+.fruit-fill.grapes {
+  fill: #8a62cc;
+}
+
+.fruit-fill.peach {
+  fill: #f29d78;
+}
+
+.fruit-detail {
+  fill: none;
+  stroke: rgba(70, 40, 21, 0.6);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.fruit-shine {
+  fill: rgba(255, 245, 245, 0.45);
 }
 
 .fruit-name {
@@ -707,14 +842,17 @@ button.ghost {
     grid-template-columns: repeat(3, minmax(70px, 1fr));
   }
 
+  .wagon-yard {
+    grid-template-columns: 1fr;
+  }
+
   .train-sprite.lobby {
-    width: 52px;
-    height: 27px;
+    width: 104px;
+    height: 42px;
   }
 
   .train-sprite.focused {
-    width: 102px;
-    height: 44px;
+    width: 175%;
   }
 
   .focused-signal {

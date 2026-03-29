@@ -47,6 +47,12 @@ export interface TrainRuntime {
   pausedAt: Point | null;
 }
 
+export interface TrainComposition {
+  wagonCount: number;
+  wagonSlotLayout: number[][];
+  totalCargoSlots: number;
+}
+
 export interface Snapshot {
   serverNowMs: number;
   gridSize: number;
@@ -58,6 +64,7 @@ export interface Snapshot {
   topologyRevision: number;
   schedule: TrainSchedule;
   train: TrainRuntime;
+  trainComposition: TrainComposition;
   wagonSlots: FruitSlot[];
   cargoRule?: string;
   cargoAccess?: {

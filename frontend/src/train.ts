@@ -1,4 +1,4 @@
-import type { Direction, Point, Snapshot } from './types';
+import type { Direction, Point, Snapshot, TrainComposition } from './types';
 
 export interface TrainState {
   segmentIndex: number;
@@ -14,8 +14,7 @@ export interface TrainState {
 export interface TileTrainState {
   x: number;
   y: number;
-  movement: 'entering' | 'exiting' | 'paused';
-  edge: Direction;
+  distanceFromTile: number;
 }
 
 export function pointKey(point: Point): string {
@@ -120,43 +119,26 @@ export function computeTileTrainState(tile: Point, trainState: TrainState | null
     return null;
   }
 
-  const { from, to, progress, direction, paused } = trainState;
+  const deltaX = trainState.worldX - tile.x;
+  const deltaY = trainState.worldY - tile.y;
+  return {
+    x: 50 + deltaX * 100,
+    y: 50 + deltaY * 100,
+    distanceFromTile: Math.max(Math.abs(deltaX), Math.abs(deltaY))
+  };
+}
 
-  if (paused && pointsEqual(tile, from)) {
-    return {
-      x: 50,
-      y: 50,
-      movement: 'paused',
-      edge: direction
-    };
+export function shouldRenderTrainOnTile(
+  tileTrainState: TileTrainState | null,
+  composition: TrainComposition | null
+): boolean {
+  if (!tileTrainState) {
+    return false;
   }
 
-  if (pointsEqual(tile, from) && progress <= 0.5) {
-    const edge = edgePosition(direction);
-    const localProgress = progress / 0.5;
-
-    return {
-      x: lerp(50, edge.x, localProgress),
-      y: lerp(50, edge.y, localProgress),
-      movement: 'exiting',
-      edge: direction
-    };
-  }
-
-  if (pointsEqual(tile, to) && progress >= 0.5) {
-    const incoming = oppositeDirection(direction);
-    const edge = edgePosition(incoming);
-    const localProgress = (progress - 0.5) / 0.5;
-
-    return {
-      x: lerp(edge.x, 50, localProgress),
-      y: lerp(edge.y, 50, localProgress),
-      movement: 'entering',
-      edge: incoming
-    };
-  }
-
-  return null;
+  const wagonCount = Math.max(1, composition?.wagonCount ?? 2);
+  const estimatedTrainLengthInTiles = 0.85 + wagonCount * 0.62;
+  return tileTrainState.distanceFromTile <= estimatedTrainLengthInTiles;
 }
 
 export function directionToDegrees(direction: Direction): number {

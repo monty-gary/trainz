@@ -13,9 +13,9 @@ import {
   computeTileTrainState,
   computeTrainState,
   directionToDegrees,
-  edgePosition,
   pointKey,
-  pointsEqual
+  pointsEqual,
+  shouldRenderTrainOnTile
 } from './train';
 import type {
   CargoZone,
@@ -27,7 +27,8 @@ import type {
   Point,
   RailTile,
   ServerMessage,
-  Snapshot
+  Snapshot,
+  TrainComposition
 } from './types';
 
 const STORAGE_CLIENT_ID = 'trainz.clientId';
@@ -37,17 +38,17 @@ const LOBBY_CELL_SIZE = 72;
 const LOBBY_CELL_GAP = 8;
 const FRUIT_SLOT_COUNT = 5;
 
-const FRUIT_META: Record<FruitType, { short: string; label: string }> = {
-  apple: { short: 'APL', label: 'Apple' },
-  banana: { short: 'BAN', label: 'Banana' },
-  pear: { short: 'PER', label: 'Pear' },
-  grapes: { short: 'GRP', label: 'Grapes' },
-  peach: { short: 'PCH', label: 'Peach' }
+const FRUIT_META: Record<FruitType, { label: string }> = {
+  apple: { label: 'Apple' },
+  banana: { label: 'Banana' },
+  pear: { label: 'Pear' },
+  grapes: { label: 'Grapes' },
+  peach: { label: 'Peach' }
 };
 
 type AuthPhase = 'checking' | 'required' | 'ready';
 type ConnectionState = 'offline' | 'connecting' | 'online';
-type ViewMode = 'lobby' | 'screen';
+type ViewMode = 'lobby' | 'screen' | 'focus';
 type FruitSlot = FruitType | null;
 
 interface FruitSlotRef {
@@ -246,9 +247,24 @@ function App() {
 
   useEffect(() => {
     if (hasClaimedCell) {
-      setViewMode('screen');
+      setViewMode((previous) => (previous === 'lobby' ? 'screen' : previous));
     }
   }, [hasClaimedCell]);
+
+  useEffect(() => {
+    if (viewMode !== 'focus') {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setViewMode('screen');
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [viewMode]);
 
   const serverNowMs = tickMs + clockOffsetMs;
   const trainState = useMemo(() => computeTrainState(snapshot, serverNowMs), [snapshot, serverNowMs]);
@@ -327,6 +343,10 @@ function App() {
       '--train-rotation': `${directionToDegrees(trainState.direction)}deg`
     } as CSSProperties;
   }, [focusedTileTrain, trainState]);
+  const shouldRenderFocusedTrain = useMemo(
+    () => shouldRenderTrainOnTile(focusedTileTrain, snapshot?.trainComposition ?? null),
+    [focusedTileTrain, snapshot?.trainComposition]
+  );
 
   const canMoveCargo = Boolean(
     snapshot?.train.paused &&
@@ -487,6 +507,22 @@ function App() {
     );
   }
 
+  if (viewMode === 'focus' && self?.claimedCell && snapshot) {
+    return (
+      <main className="focus-shell">
+        <FocusTileView
+          cell={self.claimedCell}
+          railsByKey={railsByKey}
+          trainStyle={focusedTrainStyle}
+          showTrain={shouldRenderFocusedTrain}
+          trainPaused={Boolean(trainState?.paused)}
+          wagonSlots={snapshot.wagonSlots}
+          composition={snapshot.trainComposition}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <section className="app-frame">
@@ -516,10 +552,18 @@ function App() {
           <button
             type="button"
             onClick={() => setViewMode('screen')}
-            className={viewMode === 'screen' ? 'active' : ''}
+            className={viewMode === 'screen' || viewMode === 'focus' ? 'active' : ''}
             disabled={!hasClaimedCell}
           >
             My tile view
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('focus')}
+            className={viewMode === 'focus' ? 'active' : ''}
+            disabled={!hasClaimedCell}
+          >
+            My tile focus
           </button>
           {hasClaimedCell ? (
             <button type="button" className="ghost" onClick={handleReleaseCell}>
@@ -539,6 +583,7 @@ function App() {
             canClaim={!hasClaimedCell}
             selfClientId={clientId}
             wagonSlots={snapshot.wagonSlots}
+            composition={snapshot.trainComposition}
             trainMarkerStyle={trainMarkerStyle}
             trainPaused={Boolean(trainState?.paused)}
             onClaimCell={handleClaimCell}
@@ -554,9 +599,11 @@ function App() {
             claimedCells={snapshot.claimedCells}
             tileSlots={normalizeSlots(self.tileSlots)}
             wagonSlots={snapshot.wagonSlots}
+            composition={snapshot.trainComposition}
             canMoveCargo={canMoveCargo}
-            trainTileState={focusedTileTrain}
             trainStyle={focusedTrainStyle}
+            showTrain={shouldRenderFocusedTrain}
+            trainPaused={Boolean(trainState?.paused)}
             onToggleSignal={handleToggleSignal}
             onMoveFruit={handleMoveFruit}
           />
@@ -577,6 +624,7 @@ interface LobbyMapProps {
   canClaim: boolean;
   selfClientId: string;
   wagonSlots: FruitSlot[];
+  composition: TrainComposition;
   trainMarkerStyle: CSSProperties | null;
   trainPaused: boolean;
   onClaimCell: (cell: Point) => void;
@@ -591,6 +639,7 @@ function LobbyMap({
   canClaim,
   selfClientId,
   wagonSlots,
+  composition,
   trainMarkerStyle,
   trainPaused,
   onClaimCell,
@@ -680,7 +729,13 @@ function LobbyMap({
         >
           {cells}
           {trainMarkerStyle ? (
-            <TrainSprite className="lobby" style={trainMarkerStyle} paused={trainPaused} wagonLoad={wagonLoad} />
+            <TrainSprite
+              className="lobby"
+              style={trainMarkerStyle}
+              paused={trainPaused}
+              composition={composition}
+              wagonSlots={wagonSlots}
+            />
           ) : null}
         </div>
       </div>
@@ -695,9 +750,11 @@ interface FocusedScreenViewProps {
   claimedCells: ClaimedCell[];
   tileSlots: FruitSlot[];
   wagonSlots: FruitSlot[];
+  composition: TrainComposition;
   canMoveCargo: boolean;
-  trainTileState: ReturnType<typeof computeTileTrainState>;
   trainStyle: CSSProperties | null;
+  showTrain: boolean;
+  trainPaused: boolean;
   onToggleSignal: () => void;
   onMoveFruit: (source: FruitSlotRef, target: FruitDropTarget) => void;
 }
@@ -709,9 +766,11 @@ function FocusedScreenView({
   claimedCells,
   tileSlots,
   wagonSlots,
+  composition,
   canMoveCargo,
-  trainTileState,
   trainStyle,
+  showTrain,
+  trainPaused,
   onToggleSignal,
   onMoveFruit
 }: FocusedScreenViewProps) {
@@ -824,12 +883,13 @@ function FocusedScreenView({
         <div className="tile-area">
           <div className="focused-tile">
             <RailGlyph edges={ownRailEdges} emphasized />
-            {trainStyle && trainTileState ? (
+            {trainStyle && showTrain ? (
               <TrainSprite
                 className="focused"
                 style={trainStyle}
-                paused={trainTileState.movement === 'paused'}
-                wagonLoad={wagonLoad}
+                paused={trainPaused}
+                composition={composition}
+                wagonSlots={wagonSlots}
               />
             ) : null}
             <button
@@ -873,24 +933,19 @@ function FocusedScreenView({
 
           <div className="cargo-section">
             <h3>Wagon cargo ({wagonLoad}/5)</h3>
-            <div className="slot-row wagon">
-              {normalizeSlots(wagonSlots).map((fruit, index) => {
-                const targetId = `wagon:${index}`;
-                return (
-                  <FruitSlotButton
-                    key={targetId}
-                    targetId={targetId}
-                    title={`Wagon slot ${index + 1}`}
-                    fruit={fruit}
-                    canDrag={canDrag}
-                    isDragSource={sourceTargetId === targetId}
-                    isDropHover={dragState?.overTargetId === targetId}
-                    onPointerDown={(event) =>
-                      handleFruitPointerDown(event, { zone: 'wagon', slot: index }, fruit)
-                    }
-                  />
-                );
-              })}
+            <div className="wagon-yard">
+              {composition.wagonSlotLayout.map((wagonSlotIndexes, wagonIndex) => (
+                <OpenTopWagon
+                  key={`wagon-${wagonIndex + 1}`}
+                  wagonIndex={wagonIndex}
+                  slotIndexes={wagonSlotIndexes}
+                  wagonSlots={wagonSlots}
+                  canDrag={canDrag}
+                  sourceTargetId={sourceTargetId}
+                  hoverTargetId={dragState?.overTargetId || null}
+                  onPointerDown={handleFruitPointerDown}
+                />
+              ))}
             </div>
           </div>
 
@@ -942,6 +997,84 @@ function FocusedScreenView({
   );
 }
 
+function FocusTileView({
+  cell,
+  railsByKey,
+  trainStyle,
+  showTrain,
+  trainPaused,
+  wagonSlots,
+  composition
+}: {
+  cell: Point;
+  railsByKey: Map<string, RailTile>;
+  trainStyle: CSSProperties | null;
+  showTrain: boolean;
+  trainPaused: boolean;
+  wagonSlots: FruitSlot[];
+  composition: TrainComposition;
+}) {
+  const ownRailEdges = railsByKey.get(pointKey(cell))?.edges || [];
+  return (
+    <section className="focus-stage">
+      <div className="focus-track">
+        <RailGlyph edges={ownRailEdges} emphasized />
+        {trainStyle && showTrain ? (
+          <TrainSprite
+            className="focused immersive"
+            style={trainStyle}
+            paused={trainPaused}
+            composition={composition}
+            wagonSlots={wagonSlots}
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function OpenTopWagon({
+  wagonIndex,
+  slotIndexes,
+  wagonSlots,
+  canDrag,
+  sourceTargetId,
+  hoverTargetId,
+  onPointerDown
+}: {
+  wagonIndex: number;
+  slotIndexes: number[];
+  wagonSlots: FruitSlot[];
+  canDrag: boolean;
+  sourceTargetId: string | null;
+  hoverTargetId: string | null;
+  onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>, source: FruitSlotRef, fruit: FruitSlot) => void;
+}) {
+  return (
+    <div className="wagon-card" aria-label={`Wagon ${wagonIndex + 1}`}>
+      <div className="wagon-label">Wagon {wagonIndex + 1}</div>
+      <div className={`wagon-slot-grid slots-${slotIndexes.length}`}>
+        {slotIndexes.map((slotIndex) => {
+          const fruit = wagonSlots[slotIndex] || null;
+          const targetId = `wagon:${slotIndex}`;
+          return (
+            <FruitSlotButton
+              key={targetId}
+              targetId={targetId}
+              title={`Wagon ${wagonIndex + 1} slot ${slotIndex + 1}`}
+              fruit={fruit}
+              canDrag={canDrag}
+              isDragSource={sourceTargetId === targetId}
+              isDropHover={hoverTargetId === targetId}
+              onPointerDown={(event) => onPointerDown(event, { zone: 'wagon', slot: slotIndex }, fruit)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FruitSlotButton({
   targetId,
   title,
@@ -979,29 +1112,25 @@ function FruitVisual({ fruit }: { fruit: FruitType }) {
   const meta = FRUIT_META[fruit];
   return (
     <span className="fruit-token">
-      <span className="fruit-code">{meta.short}</span>
+      <FruitSprite fruit={fruit} />
       <span className="fruit-name">{meta.label}</span>
     </span>
   );
 }
 
 function RailGlyph({ edges, emphasized = false }: { edges: Direction[]; emphasized?: boolean }) {
+  const paths = buildTrackPaths(edges);
+
   return (
     <svg viewBox="0 0 100 100" aria-hidden="true" className={`rail-svg${emphasized ? ' emphasized' : ''}`}>
-      {edges.map((edge) => {
-        const endpoint = edgePosition(edge);
-        return (
-          <line
-            key={edge}
-            x1="50"
-            y1="50"
-            x2={endpoint.x}
-            y2={endpoint.y}
-            className="rail-segment"
-          />
-        );
-      })}
-      <circle cx="50" cy="50" r="7" className="rail-hub" />
+      {paths.map((path, index) => (
+        <g key={`${path}-${index}`}>
+          <path d={path} className="track-bed" />
+          <path d={path} className="track-ties" />
+          <path d={path} className="track-rail" />
+          <path d={path} className="track-rail-inner" />
+        </g>
+      ))}
     </svg>
   );
 }
@@ -1010,42 +1139,216 @@ function TrainSprite({
   className,
   style,
   paused,
-  wagonLoad
+  composition,
+  wagonSlots
 }: {
-  className: 'lobby' | 'focused';
+  className: 'lobby' | 'focused' | 'focused immersive';
   style: CSSProperties;
   paused: boolean;
-  wagonLoad: number;
+  composition: TrainComposition;
+  wagonSlots: FruitSlot[];
 }) {
-  const cargoDots = new Array(5).fill(0).map((_, index) => ({
-    x: 125 + index * 8,
-    active: index < wagonLoad
-  }));
+  const slotLayout = composition.wagonSlotLayout;
+  const normalizedWagonSlots = normalizeSlots(wagonSlots);
 
   return (
     <div className={`train-sprite ${className}${paused ? ' paused' : ''}`} style={style}>
-      <svg viewBox="0 0 182 72" aria-hidden="true" className="train-svg">
-        <rect x="14" y="18" width="68" height="34" rx="9" className="train-locomotive" />
-        <rect x="38" y="26" width="20" height="14" rx="3" className="train-window" />
-        <rect x="88" y="32" width="12" height="7" rx="3" className="train-coupler" />
-        <rect x="106" y="20" width="62" height="32" rx="8" className="train-carriage" />
-        <rect x="113" y="27" width="24" height="11" rx="3" className="train-window" />
-        {cargoDots.map((dot) => (
-          <circle
-            key={dot.x}
-            cx={dot.x}
-            cy="44"
-            r="3.2"
-            className={dot.active ? 'wagon-cargo on' : 'wagon-cargo'}
-          />
-        ))}
-        <circle cx="30" cy="56" r="7" className="train-wheel" />
-        <circle cx="58" cy="56" r="7" className="train-wheel" />
-        <circle cx="122" cy="56" r="7" className="train-wheel" />
-        <circle cx="153" cy="56" r="7" className="train-wheel" />
+      <svg viewBox="0 0 420 132" aria-hidden="true" className="train-svg">
+        <g className="locomotive-group">
+          <rect x="14" y="66" width="138" height="36" rx="7" className="train-base" />
+          <rect x="24" y="42" width="96" height="38" rx="8" className="train-locomotive" />
+          <rect x="62" y="34" width="36" height="14" rx="4" className="train-stack" />
+          <rect x="38" y="52" width="24" height="15" rx="3" className="train-window" />
+          <rect x="68" y="52" width="24" height="15" rx="3" className="train-window" />
+          <circle cx="40" cy="104" r="11" className="train-wheel" />
+          <circle cx="86" cy="104" r="11" className="train-wheel" />
+          <circle cx="128" cy="104" r="11" className="train-wheel" />
+        </g>
+
+        <rect x="157" y="80" width="18" height="6" rx="3" className="train-coupler" />
+        <g className="wagon-group">
+          <rect x="178" y="70" width="98" height="32" rx="7" className="wagon-open" />
+          <rect x="184" y="64" width="86" height="9" rx="4" className="wagon-rim" />
+          <rect x="189" y="72" width="76" height="20" rx="3" className="wagon-bay" />
+          <circle cx="198" cy="104" r="10" className="train-wheel" />
+          <circle cx="256" cy="104" r="10" className="train-wheel" />
+          {slotLayout[0]?.map((slotIndex, index) => {
+            const fruit = normalizedWagonSlots[slotIndex];
+            if (!fruit) {
+              return null;
+            }
+
+            return (
+              <g key={`slot-a-${slotIndex}`} transform={`translate(${205 + index * 31} 77) scale(0.45)`}>
+                <FruitSpriteMark fruit={fruit} />
+              </g>
+            );
+          })}
+        </g>
+
+        <rect x="281" y="80" width="18" height="6" rx="3" className="train-coupler" />
+        <g className="wagon-group">
+          <rect x="302" y="70" width="104" height="32" rx="7" className="wagon-open" />
+          <rect x="308" y="64" width="92" height="9" rx="4" className="wagon-rim" />
+          <rect x="313" y="72" width="82" height="20" rx="3" className="wagon-bay" />
+          <circle cx="322" cy="104" r="10" className="train-wheel" />
+          <circle cx="386" cy="104" r="10" className="train-wheel" />
+          {slotLayout[1]?.map((slotIndex, index) => {
+            const fruit = normalizedWagonSlots[slotIndex];
+            if (!fruit) {
+              return null;
+            }
+
+            return (
+              <g key={`slot-b-${slotIndex}`} transform={`translate(${325 + index * 24} 77) scale(0.42)`}>
+                <FruitSpriteMark fruit={fruit} />
+              </g>
+            );
+          })}
+        </g>
       </svg>
     </div>
   );
+}
+
+function FruitSprite({ fruit }: { fruit: FruitType }) {
+  return (
+    <svg viewBox="0 0 36 36" aria-hidden="true" className="fruit-sprite">
+      <FruitSpriteMark fruit={fruit} />
+    </svg>
+  );
+}
+
+function FruitSpriteMark({ fruit }: { fruit: FruitType }) {
+  if (fruit === 'apple') {
+    return (
+      <>
+        <ellipse cx="17" cy="7" rx="2.2" ry="4.5" className="stem" />
+        <ellipse cx="23.5" cy="7.5" rx="5.1" ry="2.8" className="leaf" />
+        <circle cx="18" cy="20" r="12" className="fruit-fill apple" />
+        <circle cx="13.2" cy="15.8" r="2.2" className="fruit-shine" />
+      </>
+    );
+  }
+
+  if (fruit === 'banana') {
+    return (
+      <>
+        <path d="M8 23c2 5 8 8 15 6 4-1 8-4 9-8-3 2-6 3-10 3-6 0-10-2-14-6z" className="fruit-fill banana" />
+        <path d="M10 22c2 2 6 4 11 4 3 0 6-1 9-2" className="fruit-detail" />
+      </>
+    );
+  }
+
+  if (fruit === 'pear') {
+    return (
+      <>
+        <ellipse cx="18" cy="9" rx="2" ry="4.2" className="stem" />
+        <ellipse cx="23.3" cy="9.5" rx="4.4" ry="2.4" className="leaf" />
+        <path d="M18 11c4 0 7 3 7 7 0 5-3 10-7 10s-7-5-7-10c0-4 3-7 7-7z" className="fruit-fill pear" />
+      </>
+    );
+  }
+
+  if (fruit === 'grapes') {
+    return (
+      <>
+        <ellipse cx="17" cy="8" rx="2" ry="4" className="stem" />
+        {[12, 18, 24].map((x, index) => (
+          <circle key={`g1-${x}`} cx={x} cy={15 + index * 4.5} r="4.4" className="fruit-fill grapes" />
+        ))}
+        <circle cx="18" cy="26" r="4.6" className="fruit-fill grapes" />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <ellipse cx="18" cy="9.5" rx="2" ry="4.2" className="stem" />
+      <ellipse cx="23.5" cy="10" rx="4.4" ry="2.4" className="leaf" />
+      <ellipse cx="18" cy="20" rx="11" ry="9.5" className="fruit-fill peach" />
+      <path d="M18 12v16" className="fruit-detail" />
+    </>
+  );
+}
+
+function buildTrackPaths(edges: Direction[]): string[] {
+  const has = {
+    N: edges.includes('N'),
+    E: edges.includes('E'),
+    S: edges.includes('S'),
+    W: edges.includes('W')
+  };
+
+  if (edges.length === 0) {
+    return [];
+  }
+
+  if (edges.length === 1) {
+    const edge = edges[0];
+    return [edgePath(edge)];
+  }
+
+  if (edges.length === 2) {
+    if (has.N && has.S) {
+      return ['M50 2 L50 98'];
+    }
+
+    if (has.E && has.W) {
+      return ['M2 50 L98 50'];
+    }
+
+    return [cornerPath(edges[0], edges[1])];
+  }
+
+  if (edges.length === 3) {
+    if (!has.N) {
+      return ['M2 50 L98 50', 'M50 98 L50 50'];
+    }
+
+    if (!has.E) {
+      return ['M50 2 L50 98', 'M2 50 L50 50'];
+    }
+
+    if (!has.S) {
+      return ['M2 50 L98 50', 'M50 2 L50 50'];
+    }
+
+    return ['M50 2 L50 98', 'M98 50 L50 50'];
+  }
+
+  return ['M50 2 L50 98', 'M2 50 L98 50'];
+}
+
+function edgePath(edge: Direction): string {
+  switch (edge) {
+    case 'N':
+      return 'M50 50 L50 2';
+    case 'E':
+      return 'M50 50 L98 50';
+    case 'S':
+      return 'M50 50 L50 98';
+    case 'W':
+      return 'M50 50 L2 50';
+  }
+}
+
+function cornerPath(a: Direction, b: Direction): string {
+  const pair = [a, b].sort().join('');
+
+  if (pair === 'EN') {
+    return 'M98 50 Q50 50 50 2';
+  }
+
+  if (pair === 'ES') {
+    return 'M98 50 Q50 50 50 98';
+  }
+
+  if (pair === 'NW') {
+    return 'M2 50 Q50 50 50 2';
+  }
+
+  return 'M2 50 Q50 50 50 98';
 }
 
 function ConnectionPill({ state }: { state: ConnectionState }) {
